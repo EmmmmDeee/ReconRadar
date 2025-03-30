@@ -1,0 +1,53 @@
+/* Custom styles to complement the Bootstrap theme */
+
+/* Add a subtle background pattern */
+body {
+    background-color: var(--bs-dark);
+    min-height: 100vh;
+}
+
+/* Card and container styling */
+.card {
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.card-header {
+    border-radius: 10px 10px 0 0 !important;
+}
+
+/* Header styling */
+header h1 {
+    font-weight: 700;
+    letter-spacing: -1px;
+}
+
+/* Profile list item styling */
+.list-group-item {
+    transition: all 0.2s ease;
+}
+
+.list-group-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Footer styling */
+footer {
+    opacity: 0.7;
+}
+
+footer a {
+    text-decoration: none;
+}
+
+footer a:hover {
+    text-decoration: underline;
+}
+
+/* Loading spinner styles */
+#loading .spinner-border {
+    width: 3rem;
+    height: 3rem;
+}
