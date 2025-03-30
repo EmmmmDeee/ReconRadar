@@ -77,6 +77,9 @@ document.addEventListener('DOMContentLoaded', function() {
             return response.json();
         })
         .then(data => {
+            // Debug log to see the structure of the data
+            console.log("API Response:", data);
+                
             if (data.status === 'success') {
                 // Store the results for export
                 currentSearchResults = data;
@@ -143,47 +146,71 @@ document.addEventListener('DOMContentLoaded', function() {
             profilesFoundContainer.classList.remove('d-none');
             profileCount.textContent = Object.keys(data.results).length;
             
-            // Check if we have platform metadata
-            if (data.platform_metadata && data.platform_metadata.categories) {
-                // Group platforms by category
-                const categories = data.platform_metadata.categories;
+            // Check if we have platform metadata with categories
+            if (data.platform_metadata && data.platform_metadata.categories && 
+                Object.keys(data.platform_metadata.categories).length > 0) {
                 
-                // Create a header for each category and list platforms underneath
-                for (const [category, platforms] of Object.entries(categories)) {
-                    // Create a category header
-                    const categoryHeader = document.createElement('div');
-                    categoryHeader.className = 'mb-3';
-                    categoryHeader.innerHTML = `
-                        <h5 class="border-bottom pb-2 text-info">
-                            <i class="fa fa-folder-open me-2"></i>${category}
-                        </h5>
-                    `;
-                    profilesList.appendChild(categoryHeader);
+                try {
+                    // Group platforms by category
+                    const categories = data.platform_metadata.categories;
                     
-                    // Sort platforms alphabetically within category
-                    platforms.sort();
-                    
-                    // Add platforms to this category
-                    for (const platform of platforms) {
-                        if (data.results[platform]) {
-                            const item = createProfileListItem(platform, data.results[platform]);
-                            
-                            // Add response time if available
-                            if (data.platform_metadata.response_times && 
-                                data.platform_metadata.response_times[platform]) {
-                                const responseTime = data.platform_metadata.response_times[platform];
-                                
-                                // Add a small indicator for fast responses
-                                if (responseTime < 1) {
-                                    const speedBadge = document.createElement('span');
-                                    speedBadge.className = 'badge bg-success ms-2';
-                                    speedBadge.innerHTML = '<i class="fa fa-bolt"></i> Fast';
-                                    item.querySelector('.fw-bold').appendChild(speedBadge);
-                                }
-                            }
-                            
-                            profilesList.appendChild(item);
+                    // Create a header for each category and list platforms underneath
+                    for (const [category, platforms] of Object.entries(categories)) {
+                        if (!platforms || !Array.isArray(platforms) || platforms.length === 0) {
+                            continue; // Skip empty categories
                         }
+                        
+                        // Create a category header
+                        const categoryHeader = document.createElement('div');
+                        categoryHeader.className = 'mb-3';
+                        categoryHeader.innerHTML = `
+                            <h5 class="border-bottom pb-2 text-info">
+                                <i class="fa fa-folder-open me-2"></i>${category}
+                            </h5>
+                        `;
+                        profilesList.appendChild(categoryHeader);
+                        
+                        // Sort platforms alphabetically within category
+                        const sortedPlatforms = [...platforms].sort();
+                        
+                        // Add platforms to this category
+                        for (const platform of sortedPlatforms) {
+                            if (data.results[platform]) {
+                                const item = createProfileListItem(platform, data.results[platform]);
+                                
+                                // Add response time if available
+                                try {
+                                    if (data.platform_metadata.response_times && 
+                                        data.platform_metadata.response_times[platform]) {
+                                        const responseTime = data.platform_metadata.response_times[platform];
+                                        
+                                        // Add a small indicator for fast responses
+                                        if (responseTime < 1) {
+                                            const speedBadge = document.createElement('span');
+                                            speedBadge.className = 'badge bg-success ms-2';
+                                            speedBadge.innerHTML = '<i class="fa fa-bolt"></i> Fast';
+                                            
+                                            const titleElement = item.querySelector('.fw-bold');
+                                            if (titleElement) {
+                                                titleElement.appendChild(speedBadge);
+                                            }
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.error("Error adding response time badge:", e);
+                                }
+                                
+                                profilesList.appendChild(item);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error displaying categorized results:", e);
+                    // Fallback to non-categorized display
+                    const sortedPlatforms = Object.entries(data.results).sort((a, b) => a[0].localeCompare(b[0]));
+                    for (const [platform, url] of sortedPlatforms) {
+                        const item = createProfileListItem(platform, url);
+                        profilesList.appendChild(item);
                     }
                 }
             } else {
@@ -214,16 +241,21 @@ document.addEventListener('DOMContentLoaded', function() {
             reverseImageContainer.classList.remove('d-none');
             reverseImageLinks.innerHTML = '';
             
-            // Add status alert if the image is invalidated
+            // Add status alert if the image metadata exists and is invalidated
             if (data.image_metadata && data.image_metadata.validated === false) {
-                const errorAlert = document.createElement('div');
-                errorAlert.className = 'alert alert-danger mb-4';
-                errorAlert.innerHTML = `
-                    <i class="fa fa-exclamation-circle me-2"></i>
-                    <strong>Image validation error:</strong> ${data.image_metadata.error || 'Invalid image URL provided'}
-                    <p class="small mb-0 mt-2">Please make sure the URL points to a valid image file (JPG, PNG, etc.)</p>
-                `;
-                reverseImageLinks.appendChild(errorAlert);
+                try {
+                    const errorAlert = document.createElement('div');
+                    errorAlert.className = 'alert alert-danger mb-4';
+                    const errorMsg = (data.image_metadata.error) ? data.image_metadata.error : 'Invalid image URL provided';
+                    errorAlert.innerHTML = `
+                        <i class="fa fa-exclamation-circle me-2"></i>
+                        <strong>Image validation error:</strong> ${errorMsg}
+                        <p class="small mb-0 mt-2">Please make sure the URL points to a valid image file (JPG, PNG, etc.)</p>
+                    `;
+                    reverseImageLinks.appendChild(errorAlert);
+                } catch (e) {
+                    console.error("Error displaying image validation message:", e);
+                }
             }
             
             for (const [engine, url] of Object.entries(data.reverse_image_urls)) {
