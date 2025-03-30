@@ -123,170 +123,219 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Function to display results
     function displayResults(data, username) {
-        // Update result summary
-        document.getElementById('result-summary').textContent = 
-            `Found ${data.stats.profiles_found} profiles for username "${username}" across ${data.stats.platforms_checked} platforms in ${data.stats.time_taken} seconds`;
-        
-        // Update stats
-        document.getElementById('result-username').textContent = username;
-        document.getElementById('result-date').textContent = data.stats.date;
-        document.getElementById('result-platforms-checked').textContent = data.stats.platforms_checked;
-        document.getElementById('result-profiles-found').textContent = data.stats.profiles_found;
-        document.getElementById('result-time-taken').textContent = data.stats.time_taken + ' seconds';
-        document.getElementById('result-timeouts').textContent = data.stats.timeouts;
-        document.getElementById('result-errors').textContent = data.stats.errors;
-        
-        // Populate profiles list
-        const profilesList = document.getElementById('profiles-list');
-        profilesList.innerHTML = '';
-        const profilesFoundContainer = document.getElementById('profiles-found-container');
-        const profileCount = document.getElementById('profile-count');
-        
-        // Always show profile count
-        profilesFoundContainer.classList.remove('d-none');
-        profileCount.textContent = Object.keys(data.results).length;
-            
-        // Always show found profiles in a simpler format to ensure reliability
-        profilesList.innerHTML = ''; // Clear any previous results
-            
-        if (Object.keys(data.results).length > 0) {
-            // Sort platforms alphabetically for consistent display
-            const sortedPlatforms = Object.entries(data.results).sort((a, b) => a[0].localeCompare(b[0]));
-                
-            // Create a simple list of profiles
-            for (const [platform, url] of sortedPlatforms) {
-                const item = createProfileListItem(platform, url);
-                profilesList.appendChild(item);
+        try {
+            // Safety check: make sure we have the required data
+            if (!data || !data.stats) {
+                throw new Error("Invalid data structure received from API");
             }
+            
+            // Update result summary
+            document.getElementById('result-summary').textContent = 
+                `Found ${data.stats.profiles_found} profiles for username "${username}" across ${data.stats.platforms_checked} platforms in ${data.stats.time_taken} seconds`;
+            
+            // Update stats
+            document.getElementById('result-username').textContent = username;
+            document.getElementById('result-date').textContent = data.stats.date || "Unknown";
+            document.getElementById('result-platforms-checked').textContent = data.stats.platforms_checked || "0";
+            document.getElementById('result-profiles-found').textContent = data.stats.profiles_found || "0";
+            document.getElementById('result-time-taken').textContent = (data.stats.time_taken || "0") + ' seconds';
+            document.getElementById('result-timeouts').textContent = data.stats.timeouts || "0";
+            document.getElementById('result-errors').textContent = data.stats.errors || "0";
+            
+            // Populate profiles list
+            const profilesList = document.getElementById('profiles-list');
+            profilesList.innerHTML = ''; // Clear any previous results
+            const profilesFoundContainer = document.getElementById('profiles-found-container');
+            const profileCount = document.getElementById('profile-count');
+            
+            // Check if results exist and are properly formatted
+            const results = data.results || {};
+            const profileKeys = Object.keys(results);
+            
+            // Always show profile count
+            profilesFoundContainer.classList.remove('d-none');
+            profileCount.textContent = profileKeys.length;
                 
-            // Log success message
-            console.log("Successfully displayed", Object.keys(data.results).length, "profiles");
-        } else {
-            // Show a message when no profiles are found
-            const noResults = document.createElement('div');
-            noResults.className = 'alert alert-warning';
-            noResults.innerHTML = '<i class="fa fa-exclamation-triangle me-2"></i> No profiles found for this username.';
-            profilesList.appendChild(noResults);
+            if (profileKeys.length > 0) {
+                // Sort platforms alphabetically for consistent display
+                const sortedPlatforms = Object.entries(results).sort((a, b) => a[0].localeCompare(b[0]));
+                    
+                // Create a simple list of profiles
+                for (const [platform, url] of sortedPlatforms) {
+                    try {
+                        const item = createProfileListItem(platform, url);
+                        profilesList.appendChild(item);
+                    } catch (itemError) {
+                        console.error(`Error creating list item for ${platform}:`, itemError);
+                    }
+                }
+                    
+                // Log success message
+                console.log("Successfully displayed", profileKeys.length, "profiles");
+            } else {
+                // Show a message when no profiles are found
+                const noResults = document.createElement('div');
+                noResults.className = 'alert alert-warning';
+                noResults.innerHTML = '<i class="fa fa-exclamation-triangle me-2"></i> No profiles found for this username.';
+                profilesList.appendChild(noResults);
+            }
+        } catch (error) {
+            console.error("Error displaying results:", error);
+            // Show a more user-friendly error
+            const profilesList = document.getElementById('profiles-list');
+            profilesList.innerHTML = '';
+            const errorAlert = document.createElement('div');
+            errorAlert.className = 'alert alert-danger';
+            errorAlert.innerHTML = '<i class="fa fa-exclamation-circle me-2"></i> There was an error displaying the results. Please try again.';
+            profilesList.appendChild(errorAlert);
         }
         
         // Add reverse image search links if provided
-        const reverseImageContainer = document.getElementById('reverse-image-container');
-        const reverseImageLinks = document.getElementById('reverse-image-links');
-        
-        if (data.reverse_image_urls) {
-            reverseImageContainer.classList.remove('d-none');
-            reverseImageLinks.innerHTML = '';
+        try {
+            const reverseImageContainer = document.getElementById('reverse-image-container');
+            const reverseImageLinks = document.getElementById('reverse-image-links');
             
-            // Add status alert if the image metadata exists and is invalidated
-            if (data.image_metadata && data.image_metadata.validated === false) {
-                try {
-                    const errorAlert = document.createElement('div');
-                    errorAlert.className = 'alert alert-danger mb-4';
-                    const errorMsg = (data.image_metadata.error) ? data.image_metadata.error : 'Invalid image URL provided';
-                    errorAlert.innerHTML = `
-                        <i class="fa fa-exclamation-circle me-2"></i>
-                        <strong>Image validation error:</strong> ${errorMsg}
-                        <p class="small mb-0 mt-2">Please make sure the URL points to a valid image file (JPG, PNG, etc.)</p>
-                    `;
-                    reverseImageLinks.appendChild(errorAlert);
-                } catch (e) {
-                    console.error("Error displaying image validation message:", e);
-                }
-            }
-            
-            for (const [engine, url] of Object.entries(data.reverse_image_urls)) {
-                const colDiv = document.createElement('div');
-                colDiv.className = 'col';
+            if (reverseImageContainer && reverseImageLinks && data.reverse_image_urls) {
+                reverseImageContainer.classList.remove('d-none');
+                reverseImageLinks.innerHTML = '';
                 
-                const card = document.createElement('div');
-                card.className = 'card h-100';
-                
-                const cardBody = document.createElement('div');
-                cardBody.className = 'card-body';
-                
-                // Select icon based on engine
-                let engineIcon = 'fa-search';
-                let iconColor = 'text-info';
-                let engineDescription = 'Find similar images or sources';
-                
-                if (engine === 'Google') {
-                    engineIcon = 'fa-google';
-                    iconColor = 'text-danger';
-                    engineDescription = 'Powerful visual search with AI-powered image recognition';
-                } else if (engine === 'Bing') {
-                    engineIcon = 'fa-windows';
-                    iconColor = 'text-primary';
-                    engineDescription = 'Microsoft\'s image search with visual similarity matching';
-                } else if (engine === 'Yandex') {
-                    engineIcon = 'fa-search';
-                    iconColor = 'text-warning';
-                    engineDescription = 'Excellent at finding exact matches and sources';
-                } else if (engine === 'Baidu') {
-                    engineIcon = 'fa-globe';
-                    iconColor = 'text-info';
-                    engineDescription = 'China\'s search engine, good for finding Asian sources';
-                } else if (engine === 'TinEye') {
-                    engineIcon = 'fa-eye';
-                    iconColor = 'text-success';
-                    engineDescription = 'Specialized reverse image search engine with precise matching';
+                // Add status alert if the image metadata exists and is invalidated
+                if (data.image_metadata && data.image_metadata.validated === false) {
+                    try {
+                        const errorAlert = document.createElement('div');
+                        errorAlert.className = 'alert alert-danger mb-4';
+                        const errorMsg = (data.image_metadata.error) ? data.image_metadata.error : 'Invalid image URL provided';
+                        errorAlert.innerHTML = `
+                            <i class="fa fa-exclamation-circle me-2"></i>
+                            <strong>Image validation error:</strong> ${errorMsg}
+                            <p class="small mb-0 mt-2">Please make sure the URL points to a valid image file (JPG, PNG, etc.)</p>
+                        `;
+                        reverseImageLinks.appendChild(errorAlert);
+                    } catch (e) {
+                        console.error("Error displaying image validation message:", e);
+                    }
                 }
                 
-                cardBody.innerHTML = `
-                    <h5 class="card-title">
-                        <i class="fa ${engineIcon} ${iconColor} me-2"></i>${engine}
-                    </h5>
-                    <p class="card-text small">${engineDescription}</p>
-                `;
-                
-                const cardFooter = document.createElement('div');
-                cardFooter.className = 'card-footer';
-                
-                const link = document.createElement('a');
-                link.href = url;
-                link.target = '_blank';
-                link.className = 'btn btn-sm btn-outline-info w-100';
-                link.innerHTML = '<i class="fa fa-external-link me-2"></i>Search on ' + engine;
-                
-                cardFooter.appendChild(link);
-                card.appendChild(cardBody);
-                card.appendChild(cardFooter);
-                colDiv.appendChild(card);
-                reverseImageLinks.appendChild(colDiv);
+                // Make sure the reverse_image_urls is an object and not empty
+                if (typeof data.reverse_image_urls === 'object' && Object.keys(data.reverse_image_urls).length > 0) {
+                    for (const [engine, url] of Object.entries(data.reverse_image_urls)) {
+                        try {
+                            const colDiv = document.createElement('div');
+                            colDiv.className = 'col';
+                            
+                            const card = document.createElement('div');
+                            card.className = 'card h-100';
+                            
+                            const cardBody = document.createElement('div');
+                            cardBody.className = 'card-body';
+                            
+                            // Select icon based on engine
+                            let engineIcon = 'fa-search';
+                            let iconColor = 'text-info';
+                            let engineDescription = 'Find similar images or sources';
+                            
+                            if (engine === 'Google') {
+                                engineIcon = 'fa-google';
+                                iconColor = 'text-danger';
+                                engineDescription = 'Powerful visual search with AI-powered image recognition';
+                            } else if (engine === 'Bing') {
+                                engineIcon = 'fa-windows';
+                                iconColor = 'text-primary';
+                                engineDescription = 'Microsoft\'s image search with visual similarity matching';
+                            } else if (engine === 'Yandex') {
+                                engineIcon = 'fa-search';
+                                iconColor = 'text-warning';
+                                engineDescription = 'Excellent at finding exact matches and sources';
+                            } else if (engine === 'Baidu') {
+                                engineIcon = 'fa-globe';
+                                iconColor = 'text-info';
+                                engineDescription = 'China\'s search engine, good for finding Asian sources';
+                            } else if (engine === 'TinEye') {
+                                engineIcon = 'fa-eye';
+                                iconColor = 'text-success';
+                                engineDescription = 'Specialized reverse image search engine with precise matching';
+                            }
+                            
+                            cardBody.innerHTML = `
+                                <h5 class="card-title">
+                                    <i class="fa ${engineIcon} ${iconColor} me-2"></i>${engine}
+                                </h5>
+                                <p class="card-text small">${engineDescription}</p>
+                            `;
+                            
+                            const cardFooter = document.createElement('div');
+                            cardFooter.className = 'card-footer';
+                            
+                            const link = document.createElement('a');
+                            if (url) { 
+                                link.href = url;
+                                link.target = '_blank';
+                                link.className = 'btn btn-sm btn-outline-info w-100';
+                                link.innerHTML = '<i class="fa fa-external-link me-2"></i>Search on ' + engine;
+                            } else {
+                                link.className = 'btn btn-sm btn-outline-secondary w-100 disabled';
+                                link.innerHTML = '<i class="fa fa-exclamation-circle me-2"></i>Link unavailable';
+                            }
+                            
+                            cardFooter.appendChild(link);
+                            card.appendChild(cardBody);
+                            card.appendChild(cardFooter);
+                            colDiv.appendChild(card);
+                            reverseImageLinks.appendChild(colDiv);
+                        } catch (cardError) {
+                            console.error(`Error creating card for ${engine}:`, cardError);
+                        }
+                    }
+                    
+                    // If we have image metadata and it's valid, show a preview
+                    if (data.image_metadata && data.image_metadata.validated && data.image_metadata.url) {
+                        try {
+                            const previewRow = document.createElement('div');
+                            previewRow.className = 'row mt-4';
+                            
+                            const previewCol = document.createElement('div');
+                            previewCol.className = 'col-12';
+                            
+                            const previewCard = document.createElement('div');
+                            previewCard.className = 'card';
+                            
+                            const previewHeader = document.createElement('div');
+                            previewHeader.className = 'card-header';
+                            previewHeader.innerHTML = '<h5 class="mb-0"><i class="fa fa-image me-2"></i>Image Preview</h5>';
+                            
+                            const previewBody = document.createElement('div');
+                            previewBody.className = 'card-body text-center';
+                            
+                            const previewImage = document.createElement('img');
+                            previewImage.src = data.image_metadata.url;
+                            previewImage.className = 'img-fluid';
+                            previewImage.style.maxHeight = '200px';
+                            previewImage.alt = 'Uploaded image';
+                            
+                            previewBody.appendChild(previewImage);
+                            previewCard.appendChild(previewHeader);
+                            previewCard.appendChild(previewBody);
+                            previewCol.appendChild(previewCard);
+                            previewRow.appendChild(previewCol);
+                            reverseImageLinks.appendChild(previewRow);
+                        } catch (previewError) {
+                            console.error("Error creating image preview:", previewError);
+                        }
+                    }
+                } else {
+                    // Empty reverse image URLs - display a message
+                    const noUrls = document.createElement('div');
+                    noUrls.className = 'alert alert-info';
+                    noUrls.innerHTML = '<i class="fa fa-info-circle me-2"></i> No reverse image search URLs available.';
+                    reverseImageLinks.appendChild(noUrls);
+                }
+            } else {
+                if (reverseImageContainer) {
+                    reverseImageContainer.classList.add('d-none');
+                }
             }
-            
-            // If we have image metadata and it's valid, show a preview
-            if (data.image_metadata && data.image_metadata.validated) {
-                const previewRow = document.createElement('div');
-                previewRow.className = 'row mt-4';
-                
-                const previewCol = document.createElement('div');
-                previewCol.className = 'col-12';
-                
-                const previewCard = document.createElement('div');
-                previewCard.className = 'card';
-                
-                const previewHeader = document.createElement('div');
-                previewHeader.className = 'card-header';
-                previewHeader.innerHTML = '<h5 class="mb-0"><i class="fa fa-image me-2"></i>Image Preview</h5>';
-                
-                const previewBody = document.createElement('div');
-                previewBody.className = 'card-body text-center';
-                
-                const previewImage = document.createElement('img');
-                previewImage.src = data.image_metadata.url;
-                previewImage.className = 'img-fluid';
-                previewImage.style.maxHeight = '200px';
-                previewImage.alt = 'Uploaded image';
-                
-                previewBody.appendChild(previewImage);
-                previewCard.appendChild(previewHeader);
-                previewCard.appendChild(previewBody);
-                previewCol.appendChild(previewCard);
-                previewRow.appendChild(previewCol);
-                reverseImageLinks.appendChild(previewRow);
-            }
-        } else {
-            reverseImageContainer.classList.add('d-none');
+        } catch (reverseImageError) {
+            console.error("Error processing reverse image search:", reverseImageError);
         }
         
         // Hide loading and show results with animation
@@ -300,150 +349,192 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Create a profile list item
     function createProfileListItem(platform, url) {
-        // Create the main container div instead of <a> to allow for more complex content
-        const item = document.createElement('div');
-        item.setAttribute('data-platform', platform.toLowerCase());
-        item.className = 'list-group-item list-group-item-action';
-        
-        // Try to add an icon if possible
-        const iconClass = getIconClass(platform.toLowerCase());
-        
-        // Check if we have metadata for this profile
-        let metadataHtml = '';
-        if (currentSearchResults && 
-            currentSearchResults.platform_metadata && 
-            currentSearchResults.platform_metadata.detailed_metadata && 
-            currentSearchResults.platform_metadata.detailed_metadata[platform]) {
+        try {
+            if (!platform || !url) {
+                console.error("Invalid platform or URL provided to createProfileListItem");
+                // Return a basic item with an error message
+                const errorItem = document.createElement('div');
+                errorItem.className = 'list-group-item list-group-item-action text-danger';
+                errorItem.innerHTML = '<i class="fa fa-exclamation-circle me-2"></i> Invalid profile data';
+                return errorItem;
+            }
             
-            const metadata = currentSearchResults.platform_metadata.detailed_metadata[platform];
+            // Create the main container div instead of <a> to allow for more complex content
+            const item = document.createElement('div');
+            item.setAttribute('data-platform', platform.toLowerCase());
+            item.className = 'list-group-item list-group-item-action';
             
-            // Build metadata section with collapsible details
-            const metadataId = `metadata-${platform.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-            metadataHtml = `
-                <div class="mt-3 border-top pt-3">
-                    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" 
-                            data-bs-target="#${metadataId}" aria-expanded="false">
-                        <i class="fa fa-info-circle me-1"></i> Show Profile Details
-                    </button>
-                    <div class="collapse mt-2" id="${metadataId}">
-                        <div class="card card-body bg-dark">
-                            <div class="row">
-                                ${metadata.avatar_url ? 
-                                `<div class="col-md-3 mb-3">
-                                    <img src="${metadata.avatar_url}" class="img-fluid rounded" alt="Profile picture">
-                                    ${metadata.verified ? '<span class="badge bg-info mt-2 d-block"><i class="fa fa-check-circle"></i> Verified</span>' : ''}
-                                </div>` : ''}
-                                
-                                <div class="${metadata.avatar_url ? 'col-md-9' : 'col-12'}">
-                                    ${metadata.name ? `<h5>${metadata.name}</h5>` : ''}
-                                    ${metadata.username ? `<p class="mb-1"><strong>Username:</strong> ${metadata.username}</p>` : ''}
-                                    ${metadata.bio ? `<p class="mb-2">${metadata.bio}</p>` : ''}
-                                    
-                                    <div class="row g-2 mb-2">
-                                        ${metadata.followers_count ? 
-                                        `<div class="col-auto">
-                                            <span class="badge bg-secondary">
-                                                <i class="fa fa-users me-1"></i> ${metadata.followers_count} followers
-                                            </span>
-                                        </div>` : ''}
-                                        
-                                        ${metadata.following_count ? 
-                                        `<div class="col-auto">
-                                            <span class="badge bg-secondary">
-                                                <i class="fa fa-user-plus me-1"></i> ${metadata.following_count} following
-                                            </span>
-                                        </div>` : ''}
-                                        
-                                        ${metadata.posts_count ? 
-                                        `<div class="col-auto">
-                                            <span class="badge bg-secondary">
-                                                <i class="fa fa-file-text me-1"></i> ${metadata.posts_count} posts
-                                            </span>
-                                        </div>` : ''}
-                                    </div>
-                                    
-                                    ${metadata.location ? 
-                                    `<p class="mb-1"><i class="fa fa-map-marker me-1"></i> ${metadata.location}</p>` : ''}
-                                    
-                                    ${metadata.website ? 
-                                    `<p class="mb-1">
-                                        <i class="fa fa-link me-1"></i> 
-                                        <a href="${metadata.website}" target="_blank">${metadata.website}</a>
-                                    </p>` : ''}
-                                    
-                                    ${metadata.join_date ? 
-                                    `<p class="mb-1"><i class="fa fa-calendar me-1"></i> Joined: ${metadata.join_date}</p>` : ''}
-                                    
-                                    ${metadata.content_sample ? 
-                                    `<div class="mt-3">
-                                        <small class="text-muted">Profile content sample:</small>
-                                        <div class="card p-2 bg-secondary mt-1">
-                                            <small>${metadata.content_sample.substring(0, 200)}${metadata.content_sample.length > 200 ? '...' : ''}</small>
+            // Try to add an icon if possible
+            const iconClass = getIconClass(platform.toLowerCase());
+            
+            // Check if we have metadata for this profile
+            let metadataHtml = '';
+            try {
+                if (currentSearchResults && 
+                    currentSearchResults.platform_metadata && 
+                    currentSearchResults.platform_metadata.detailed_metadata && 
+                    currentSearchResults.platform_metadata.detailed_metadata[platform]) {
+                    
+                    const metadata = currentSearchResults.platform_metadata.detailed_metadata[platform];
+                    if (metadata) {
+                        // Build metadata section with collapsible details
+                        const metadataId = `metadata-${platform.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+                        metadataHtml = `
+                            <div class="mt-3 border-top pt-3">
+                                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" 
+                                        data-bs-target="#${metadataId}" aria-expanded="false">
+                                    <i class="fa fa-info-circle me-1"></i> Show Profile Details
+                                </button>
+                                <div class="collapse mt-2" id="${metadataId}">
+                                    <div class="card card-body bg-dark">
+                                        <div class="row">
+                                            ${metadata.avatar_url ? 
+                                            `<div class="col-md-3 mb-3">
+                                                <img src="${metadata.avatar_url}" class="img-fluid rounded" alt="Profile picture">
+                                                ${metadata.verified ? '<span class="badge bg-info mt-2 d-block"><i class="fa fa-check-circle"></i> Verified</span>' : ''}
+                                            </div>` : ''}
+                                            
+                                            <div class="${metadata.avatar_url ? 'col-md-9' : 'col-12'}">
+                                                ${metadata.name ? `<h5>${metadata.name}</h5>` : ''}
+                                                ${metadata.username ? `<p class="mb-1"><strong>Username:</strong> ${metadata.username}</p>` : ''}
+                                                ${metadata.bio ? `<p class="mb-2">${metadata.bio}</p>` : ''}
+                                                
+                                                <div class="row g-2 mb-2">
+                                                    ${metadata.followers_count ? 
+                                                    `<div class="col-auto">
+                                                        <span class="badge bg-secondary">
+                                                            <i class="fa fa-users me-1"></i> ${metadata.followers_count} followers
+                                                        </span>
+                                                    </div>` : ''}
+                                                    
+                                                    ${metadata.following_count ? 
+                                                    `<div class="col-auto">
+                                                        <span class="badge bg-secondary">
+                                                            <i class="fa fa-user-plus me-1"></i> ${metadata.following_count} following
+                                                        </span>
+                                                    </div>` : ''}
+                                                    
+                                                    ${metadata.posts_count ? 
+                                                    `<div class="col-auto">
+                                                        <span class="badge bg-secondary">
+                                                            <i class="fa fa-file-text me-1"></i> ${metadata.posts_count} posts
+                                                        </span>
+                                                    </div>` : ''}
+                                                </div>
+                                                
+                                                ${metadata.location ? 
+                                                `<p class="mb-1"><i class="fa fa-map-marker me-1"></i> ${metadata.location}</p>` : ''}
+                                                
+                                                ${metadata.website ? 
+                                                `<p class="mb-1">
+                                                    <i class="fa fa-link me-1"></i> 
+                                                    <a href="${metadata.website}" target="_blank">${metadata.website}</a>
+                                                </p>` : ''}
+                                                
+                                                ${metadata.join_date ? 
+                                                `<p class="mb-1"><i class="fa fa-calendar me-1"></i> Joined: ${metadata.join_date}</p>` : ''}
+                                                
+                                                ${metadata.content_sample ? 
+                                                `<div class="mt-3">
+                                                    <small class="text-muted">Profile content sample:</small>
+                                                    <div class="card p-2 bg-secondary mt-1">
+                                                        <small>${metadata.content_sample.substring(0, 200)}${metadata.content_sample.length > 200 ? '...' : ''}</small>
+                                                    </div>
+                                                </div>` : ''}
+                                            </div>
                                         </div>
-                                    </div>` : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                }
+            } catch (metadataError) {
+                console.error("Error processing metadata for " + platform, metadataError);
+                metadataHtml = ''; // Reset to empty if there's an error
+            }
+            
+            // Main profile section with link
+            try {
+                item.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div class="d-flex align-items-center">
+                            <i class="${iconClass} me-3"></i>
+                            <div>
+                                <div class="fw-bold">${platform}</div>
+                                <div class="small text-truncate" style="max-width: 400px;">
+                                    <a href="${url}" target="_blank" class="text-info">${url}</a>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                </div>
-            `;
-        }
-        
-        // Main profile section with link
-        item.innerHTML = `
-            <div class="d-flex justify-content-between align-items-center">
-                <div class="d-flex align-items-center">
-                    <i class="${iconClass} me-3"></i>
-                    <div>
-                        <div class="fw-bold">${platform}</div>
-                        <div class="small text-truncate" style="max-width: 400px;">
-                            <a href="${url}" target="_blank" class="text-info">${url}</a>
+                        <div>
+                            <a href="${url}" target="_blank" class="btn btn-sm btn-outline-info me-1" title="Open Profile">
+                                <i class="fa fa-external-link"></i>
+                            </a>
+                            <button class="btn btn-sm btn-outline-secondary copy-btn" data-url="${url}" title="Copy URL">
+                                <i class="fa fa-clipboard"></i>
+                            </button>
                         </div>
                     </div>
-                </div>
-                <div>
-                    <a href="${url}" target="_blank" class="btn btn-sm btn-outline-info me-1" title="Open Profile">
-                        <i class="fa fa-external-link"></i>
-                    </a>
-                    <button class="btn btn-sm btn-outline-secondary copy-btn" data-url="${url}" title="Copy URL">
-                        <i class="fa fa-clipboard"></i>
-                    </button>
-                </div>
-            </div>
-            ${metadataHtml}
-        `;
-        
-        // Handle copy button click
-        const copyBtn = item.querySelector('.copy-btn');
-        if (copyBtn) {
-            copyBtn.addEventListener('click', function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                const url = this.getAttribute('data-url');
-                navigator.clipboard.writeText(url)
-                    .then(() => {
-                        // Change button to show copied state
-                        this.innerHTML = '<i class="fa fa-check"></i>';
-                        this.classList.remove('btn-outline-secondary');
-                        this.classList.add('btn-success');
-                        
-                        // Reset after 2 seconds
-                        setTimeout(() => {
-                            this.innerHTML = '<i class="fa fa-clipboard"></i>';
-                            this.classList.remove('btn-success');
-                            this.classList.add('btn-outline-secondary');
-                        }, 2000);
-                    })
-                    .catch(err => {
-                        console.error('Could not copy text: ', err);
-                        // Alert as fallback
-                        alert('Profile URL: ' + url);
+                    ${metadataHtml}
+                `;
+            } catch (htmlError) {
+                console.error("Error setting inner HTML for " + platform, htmlError);
+                item.innerHTML = `<div class="text-danger">Error creating item for ${platform}</div>`;
+                return item;
+            }
+            
+            // Handle copy button click
+            try {
+                const copyBtn = item.querySelector('.copy-btn');
+                if (copyBtn) {
+                    copyBtn.addEventListener('click', function(e) {
+                        try {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            
+                            const url = this.getAttribute('data-url');
+                            if (!url) {
+                                throw new Error("No URL found to copy");
+                            }
+                            
+                            navigator.clipboard.writeText(url)
+                                .then(() => {
+                                    // Change button to show copied state
+                                    this.innerHTML = '<i class="fa fa-check"></i>';
+                                    this.classList.remove('btn-outline-secondary');
+                                    this.classList.add('btn-success');
+                                    
+                                    // Reset after 2 seconds
+                                    setTimeout(() => {
+                                        this.innerHTML = '<i class="fa fa-clipboard"></i>';
+                                        this.classList.remove('btn-success');
+                                        this.classList.add('btn-outline-secondary');
+                                    }, 2000);
+                                })
+                                .catch(err => {
+                                    console.error('Could not copy text: ', err);
+                                    // Alert as fallback
+                                    alert('Profile URL: ' + url);
+                                });
+                        } catch (clickError) {
+                            console.error("Error handling copy button click", clickError);
+                        }
                     });
-            });
+                }
+            } catch (eventError) {
+                console.error("Error setting up event listener for " + platform, eventError);
+            }
+            
+            return item;
+        } catch (error) {
+            console.error("Error in createProfileListItem:", error);
+            // Return a basic item with an error message
+            const errorItem = document.createElement('div');
+            errorItem.className = 'list-group-item list-group-item-action text-danger';
+            errorItem.innerHTML = '<i class="fa fa-exclamation-circle me-2"></i> Error creating profile item';
+            return errorItem;
         }
-        
-        return item;
     }
     
     // Profile filter functionality
