@@ -131,7 +131,7 @@ def validate_image_url(url):
 
 def check_platform(username, platform, url, results, stats_lock, platform_stats, variations=None):
     """
-    Check if a username exists on a specific platform.
+    Check if a username exists on a specific platform with improved validation.
     
     Args:
         username (str): Username to check
@@ -149,18 +149,91 @@ def check_platform(username, platform, url, results, stats_lock, platform_stats,
     start_time = time.time()
     
     try:
-        response = requests.get(url, headers=headers, timeout=TIMEOUT_SECONDS)
+        # Use allow_redirects=True to follow redirects and get the final destination
+        response = requests.get(url, headers=headers, timeout=TIMEOUT_SECONDS, allow_redirects=True)
         
         end_time = time.time()
         response_time = end_time - start_time
         
+        # Store response metadata
         with stats_lock:
             platform_stats[platform] = {
                 'response_time': response_time,
-                'status_code': response.status_code
+                'status_code': response.status_code,
+                'final_url': response.url
             }
         
-        if response.status_code == 200:
+        # Define platform-specific validation patterns
+        login_indicators = [
+            "login", "signin", "sign-in", "register", "signup", "auth", 
+            "authenticate", "account", "passw", "404", "not found"
+        ]
+        
+        # Platform-specific error patterns that indicate profile doesn't exist
+        error_indicators = {
+            "Instagram": ["accounts/login", "Page Not Found", "Sorry, this page", "isn't available"],
+            "Twitter": ["account doesn't exist", "user not found", "suspended", "doesn't exist"],
+            "Facebook": ["login/?next=", "content not found", "isn't available", "page not found"],
+            "LinkedIn": ["authwall", "sign up", "join linkedin", "page doesn't exist"],
+            "GitHub": ["404 not found", "page not found", "not available"],
+            "Telegram": ["join telegram", "preview channel", "/404"],
+            "Discord": ["404", "NOT FOUND", "not found"],
+            "Medium": ["not found", "error", "link is broken"],
+            "TikTok": ["couldn't find this account", "page unavailable"],
+            "Pinterest": ["couldn't find that page", "page unavailable"],
+            "Twitch": ["sorry", "time machine", "unavailable"],
+            "Trello": ["page not found", "This page doesn't exist"],
+            "VSCO": ["404 Not Found", "doesn't exist", "page could not be found"],
+            "CodePen": ["404", "not found"],
+            "YouTube": ["404", "not available", "doesn't exist"],
+            "Reddit": ["sorry", "nobody", "goes by that name"],
+            "Snapchat": ["page could not be found"],
+            "Behance": ["sorry", "we couldn't find", "not found"],
+            "Vero": ["404", "not found"],
+            "Hackernoon": ["404", "not found", "page could not be found"],
+            "HackerRank": ["Oops", "page you're looking for", "not found"],
+            "Gist": ["not found", "404", "doesn't exist"]
+        }
+        
+        # For platforms not in error_indicators, use generic patterns
+        generic_error_patterns = ["404", "not found", "doesn't exist", "page unavailable", "no such user"]
+        
+        # Check for login or registration redirection (suspicious)
+        redirected_to_login = any(indicator in response.url.lower() for indicator in login_indicators)
+        
+        # Check for error messages in content
+        has_error_indicators = False
+        if platform in error_indicators:
+            has_error_indicators = any(indicator.lower() in response.text.lower() for indicator in error_indicators[platform])
+        else:
+            has_error_indicators = any(pattern.lower() in response.text.lower() for pattern in generic_error_patterns)
+        
+        # Special platform-specific validation
+        if platform == "Instagram" and ("accounts/login" in response.url or "login" in response.url):
+            profile_exists = False
+        elif platform == "Facebook" and ("login" in response.url or "/login/" in response.url):
+            profile_exists = False
+        elif platform == "LinkedIn" and ("authwall" in response.url or "login" in response.url):
+            profile_exists = False
+        elif platform == "Codechef" and response.status_code == 302:
+            # Codechef returns 302 for existing profiles
+            profile_exists = True
+        else:
+            # Default validation logic
+            profile_exists = (response.status_code == 200 and not has_error_indicators and not redirected_to_login)
+            
+            # Additional check for platforms known to return 200 for non-existent profiles
+            if profile_exists and platform in ["Twitter", "Instagram", "Facebook"]:
+                # Look for clear profile indicators like 'followers', 'tweets', etc.
+                profile_indicators = ["followers", "following", "tweets", "posts", "photos", "profile"]
+                profile_exists = any(indicator in response.text.lower() for indicator in profile_indicators)
+        
+        # Update platform stats with validation info
+        with stats_lock:
+            platform_stats[platform]['validated'] = profile_exists
+            platform_stats[platform]['variation_used'] = username
+        
+        if profile_exists:
             logging.debug(f"Profile found on {platform}: {url}")
             results[platform] = url
             return True  # Profile found, no need to try variations
@@ -219,39 +292,157 @@ def try_username_variations(platform, variations, results, stats_lock, platform_
         
         # Generate the URL for this platform with this variation
         var_url = ""
+        
+        # Common URL patterns based on platform
         if platform == "Instagram":
             var_url = f"https://www.instagram.com/{clean_var}/"
         elif platform == "Twitter":
             var_url = f"https://twitter.com/{clean_var}"
         elif platform == "GitHub":
             var_url = f"https://github.com/{clean_var}"
-        elif platform == "TikTok":
-            var_url = f"https://www.tiktok.com/@{clean_var}"
         elif platform == "Telegram":
             var_url = f"https://t.me/{clean_var}"
-        # Add more platforms as needed
+        elif platform == "TikTok":
+            var_url = f"https://www.tiktok.com/@{clean_var}"
+        elif platform == "Facebook":
+            var_url = f"https://www.facebook.com/{clean_var}"
+        elif platform == "LinkedIn":
+            var_url = f"https://www.linkedin.com/in/{clean_var}/"
+        elif platform == "Pinterest":
+            var_url = f"https://www.pinterest.com/{clean_var}"
+        elif platform == "Snapchat":
+            var_url = f"https://www.snapchat.com/add/{clean_var}"
+        elif platform == "Linktr.ee":
+            var_url = f"https://linktr.ee/{clean_var}"
+        elif platform == "Gitlab":
+            var_url = f"https://gitlab.com/{clean_var}"
+        elif platform == "Reddit":
+            var_url = f"https://www.reddit.com/user/{clean_var}"
+        elif platform == "YouTube":
+            var_url = f"https://www.youtube.com/user/{clean_var}"
+        elif platform == "Tumblr":
+            var_url = f"https://{clean_var}.tumblr.com"
+        elif platform == "Vimeo":
+            var_url = f"https://vimeo.com/{clean_var}"
+        elif platform == "SoundCloud":
+            var_url = f"https://soundcloud.com/{clean_var}"
+        elif platform == "Flickr":
+            var_url = f"https://www.flickr.com/people/{clean_var}/"
+        elif platform == "Dribbble":
+            var_url = f"https://dribbble.com/{clean_var}"
+        elif platform == "Medium":
+            var_url = f"https://medium.com/@{clean_var}"
+        elif platform == "DeviantArt":
+            var_url = f"https://{clean_var}.deviantart.com"
+        elif platform == "Quora":
+            var_url = f"https://www.quora.com/profile/{clean_var}"
+        elif platform == "Steam":
+            var_url = f"https://steamcommunity.com/id/{clean_var}"
+        elif platform == "Discord":
+            var_url = f"https://discord.com/users/{clean_var}"
+        elif platform == "Twitch":
+            var_url = f"https://www.twitch.tv/{clean_var}"
+        elif platform == "HackerRank":
+            var_url = f"https://hackerrank.com/{clean_var}"
+        elif platform == "Hackernoon":
+            var_url = f"https://hackernoon.com/u/{clean_var}"
+        elif platform == "Trello":
+            var_url = f"https://trello.com/{clean_var}"
+        elif platform == "Codechef":
+            var_url = f"https://www.codechef.com/users/{clean_var}"
+        elif platform == "Gist":
+            var_url = f"https://gist.github.com/{clean_var}"
+        # Add more platform-specific URL patterns here
         else:
-            # For others, try to replace username in the existing URL pattern
-            # This is a basic approach that won't work for all platforms
-            var_url = results[platform] if platform in results else ""
-            if not var_url:
-                continue
+            # For others, construct a generic URL if we can determine the pattern
+            # Try to extract the pattern from the original URL
+            if platform in results and results[platform] and "://" in results[platform]:
+                original_url = results[platform]
+                # Find where the username appears in the URL
+                parts = original_url.split('/')
+                for i, part in enumerate(parts):
+                    if part and part.lower() == clean_var.lower():
+                        # Replace that part with the new username variation
+                        parts[i] = clean_var
+                        var_url = '/'.join(parts)
+                        break
         
         # Skip if we couldn't generate a URL
         if not var_url:
             continue
             
-        # Now check this variation
+        # Now check this variation using the same validation as the main check_platform function
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
             
             start_time = time.time()
-            response = requests.get(var_url, headers=headers, timeout=TIMEOUT_SECONDS)
+            response = requests.get(var_url, headers=headers, timeout=TIMEOUT_SECONDS, allow_redirects=True)
             response_time = time.time() - start_time
             
-            if response.status_code == 200:
+            # Define platform-specific validation patterns (same as in check_platform)
+            login_indicators = [
+                "login", "signin", "sign-in", "register", "signup", "auth", 
+                "authenticate", "account", "passw", "404", "not found"
+            ]
+            
+            # Platform-specific error patterns that indicate profile doesn't exist
+            error_indicators = {
+                "Instagram": ["accounts/login", "Page Not Found", "Sorry, this page", "isn't available"],
+                "Twitter": ["account doesn't exist", "user not found", "suspended", "doesn't exist"],
+                "Facebook": ["login/?next=", "content not found", "isn't available", "page not found"],
+                "LinkedIn": ["authwall", "sign up", "join linkedin", "page doesn't exist"],
+                "GitHub": ["404 not found", "page not found", "not available"],
+                "Telegram": ["join telegram", "preview channel", "/404"],
+                "Discord": ["404", "NOT FOUND", "not found"],
+                "Medium": ["not found", "error", "link is broken"],
+                "TikTok": ["couldn't find this account", "page unavailable"],
+                "Pinterest": ["couldn't find that page", "page unavailable"],
+                "Twitch": ["sorry", "time machine", "unavailable"],
+                "Trello": ["page not found", "This page doesn't exist"],
+                "VSCO": ["404 Not Found", "doesn't exist", "page could not be found"],
+                "CodePen": ["404", "not found"],
+                "Gist": ["not found", "404", "doesn't exist"]
+            }
+            
+            # For platforms not in error_indicators, use generic patterns
+            generic_error_patterns = ["404", "not found", "doesn't exist", "page unavailable", "no such user"]
+            
+            # Check for login or registration redirection (suspicious)
+            redirected_to_login = any(indicator in response.url.lower() for indicator in login_indicators)
+            
+            # Check for error messages in content
+            has_error_indicators = False
+            if platform in error_indicators:
+                has_error_indicators = any(indicator.lower() in response.text.lower() for indicator in error_indicators[platform])
+            else:
+                has_error_indicators = any(pattern.lower() in response.text.lower() for pattern in generic_error_patterns)
+            
+            # Profile validation logic, same as in check_platform
+            profile_exists = False
+            
+            # Special platform-specific validation
+            if platform == "Instagram" and ("accounts/login" in response.url or "login" in response.url):
+                profile_exists = False
+            elif platform == "Facebook" and ("login" in response.url or "/login/" in response.url):
+                profile_exists = False
+            elif platform == "LinkedIn" and ("authwall" in response.url or "login" in response.url):
+                profile_exists = False
+            elif platform == "Codechef" and response.status_code == 302:
+                # Codechef returns 302 for existing profiles
+                profile_exists = True
+            else:
+                # Default validation logic
+                profile_exists = (response.status_code == 200 and not has_error_indicators and not redirected_to_login)
+                
+                # Additional check for platforms known to return 200 for non-existent profiles
+                if profile_exists and platform in ["Twitter", "Instagram", "Facebook"]:
+                    # Look for clear profile indicators like 'followers', 'tweets', etc.
+                    profile_indicators = ["followers", "following", "tweets", "posts", "photos", "profile"]
+                    profile_exists = any(indicator in response.text.lower() for indicator in profile_indicators)
+            
+            if profile_exists:
                 logging.debug(f"Profile found on {platform} with variation '{var}': {var_url}")
                 
                 # Update results and stats
@@ -260,7 +451,9 @@ def try_username_variations(platform, variations, results, stats_lock, platform_
                     platform_stats[platform] = {
                         'response_time': response_time,
                         'status_code': response.status_code,
-                        'variation_used': var
+                        'variation_used': var,
+                        'validated': True,
+                        'final_url': response.url
                     }
                 return True
                 
@@ -317,39 +510,111 @@ def generate_username_variations(username):
     """
     variations = [username]  # Start with the original
     
-    # Remove special characters for a clean base
+    # Step 1: Check if the username contains separators
+    has_dot = '.' in username
+    has_underscore = '_' in username
+    has_dash = '-' in username
+    has_space = ' ' in username
+    
+    # Step 2: Generate base variations without special characters
+    # Remove all separators
     clean_base = re.sub(r'[^\w]', '', username)
     if clean_base != username:
         variations.append(clean_base)
     
-    # Common separator variations (dots, underscores, dashes)
-    if '.' in username:
+    # Step 3: Split the username into parts by separators
+    parts = re.split(r'[._\-\s]', username)
+    if len(parts) > 1:  # Only process if there are actual parts
+        
+        # Step 4: Generate variations with different separators
+        # Dots
+        if not has_dot:
+            variations.append('.'.join(parts))
+        
+        # Underscores
+        if not has_underscore:
+            variations.append('_'.join(parts))
+        
+        # Dashes
+        if not has_dash:
+            variations.append('-'.join(parts))
+        
+        # No separators (concat)
+        variations.append(''.join(parts))
+        
+        # Capitalize each part
+        variations.append('.'.join([p.capitalize() for p in parts]))
+        variations.append('_'.join([p.capitalize() for p in parts]))
+        variations.append(''.join([p.capitalize() for p in parts]))
+        
+        # First part only
+        if len(parts[0]) > 3:  # Only use first part if it's substantial
+            variations.append(parts[0])
+        
+        # First and last parts only with dot
+        if len(parts) > 2:
+            variations.append(f"{parts[0]}.{parts[-1]}")
+            variations.append(f"{parts[0]}_{parts[-1]}")
+    
+    # Step 5: Generate common replacements
+    # Replace dots
+    if has_dot:
         variations.append(username.replace('.', '_'))
         variations.append(username.replace('.', '-'))
         variations.append(username.replace('.', ''))
     
-    if '_' in username:
+    # Replace underscores
+    if has_underscore:
         variations.append(username.replace('_', '.'))
         variations.append(username.replace('_', '-'))
         variations.append(username.replace('_', ''))
     
-    if '-' in username:
+    # Replace dashes
+    if has_dash:
         variations.append(username.replace('-', '.'))
         variations.append(username.replace('-', '_'))
         variations.append(username.replace('-', ''))
     
-    # Common capitalization variations
+    # Replace spaces (if any)
+    if has_space:
+        variations.append(username.replace(' ', '.'))
+        variations.append(username.replace(' ', '_'))
+        variations.append(username.replace(' ', '-'))
+        variations.append(username.replace(' ', ''))
+    
+    # Step 6: Case variations
+    # Original already in the list, try other cases
     if username.islower():
+        variations.append(username.upper())
         variations.append(username.capitalize())
-    
-    if username.isupper():
+    elif username.isupper():
         variations.append(username.lower())
+    else:
+        variations.append(username.lower())
+        variations.append(username.upper())
     
-    # Remove duplicates while preserving order
+    # Step 7: Common username patterns
+    # Add 'real' prefix (common for some platforms)
+    if not username.startswith('real'):
+        variations.append(f"real{username}")
+    
+    # Add 'the' prefix (common for some platforms)
+    if not username.startswith('the'):
+        variations.append(f"the{username}")
+    
+    # Add common number suffixes (used when preferred username is taken)
+    variations.append(f"{username}1")
+    variations.append(f"{username}123")
+    variations.append(f"{username}_official")
+    
+    # Step 8: Remove duplicates while preserving order
     unique_variations = []
+    seen = set()
     for var in variations:
-        if var not in unique_variations:
-            unique_variations.append(var)
+        clean_var = var.strip()
+        if clean_var and clean_var not in seen and len(clean_var) > 2:  # Avoid empty or very short variations
+            unique_variations.append(clean_var)
+            seen.add(clean_var)
     
     return unique_variations
 
