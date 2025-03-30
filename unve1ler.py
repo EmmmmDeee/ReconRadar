@@ -17,30 +17,117 @@ MAX_THREADS = 20  # Limit number of concurrent threads to prevent overloading
 
 def validate_image_url(url):
     """
-    Validate if a URL points to a valid image.
+    Validate if a URL points to a valid image with enhanced validation.
     
     Args:
         url (str): The URL to validate
         
     Returns:
-        bool: True if the URL points to a valid image, False otherwise
+        dict: Dictionary with validation result, direct image URL, and metadata
     """
     if not url:
-        return False
-        
+        return {"valid": False, "error": "No URL provided", "direct_url": None}
+    
+    # Common image file extensions
+    IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.svg']
+    
+    # Common image hosting domains with validation rules
+    IMAGE_HOSTS = {
+        'imgur.com': {'pattern': r'https?://(i\.)?imgur\.com/(\w+)(\.\w+)?', 'direct_format': 'https://i.imgur.com/{0}.jpg'},
+        'i.imgur.com': {'pattern': r'https?://i\.imgur\.com/(\w+)(\.\w+)?', 'direct_format': 'https://i.imgur.com/{0}.jpg'},
+        'prnt.sc': {'pattern': r'https?://prnt\.sc/(\w+)', 'direct_format': 'https://prnt.sc/{0}'},
+        'ibb.co': {'pattern': r'https?://(i\.)?ibb\.co/(\w+)/(\w+)(\.\w+)?', 'direct_format': None}, 
+        'postimg.cc': {'pattern': r'https?://(i\.)?postimg\.cc/(\w+)/(\w+)(\.\w+)?', 'direct_format': None},
+        'instagram.com': {'pattern': r'https?://www\.instagram\.com/p/(\w+)', 'direct_format': None},
+        'facebook.com': {'pattern': r'https?://www\.facebook\.com/(photo|share)', 'direct_format': None},
+    }
+    
+    # Initialize result
+    result = {
+        "valid": False,
+        "direct_url": None,
+        "content_type": None,
+        "file_extension": None,
+        "source": "unknown",
+        "error": None
+    }
+    
     try:
-        # Check if URL is valid
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        response = requests.head(url, headers=headers, timeout=TIMEOUT_SECONDS)
+        # Check for direct image URL based on extension
+        url_lower = url.lower()
+        if any(url_lower.endswith(ext) for ext in IMAGE_EXTENSIONS):
+            # Looks like a direct image URL, try to validate it
+            result["source"] = "direct"
+            result["direct_url"] = url
+            
+        # Check if it's from a known image hosting service
+        else:
+            for host, rules in IMAGE_HOSTS.items():
+                if host in url_lower:
+                    result["source"] = host
+                    import re
+                    if rules['pattern'] and rules['direct_format']:
+                        match = re.match(rules['pattern'], url)
+                        if match:
+                            # Create direct URL for known hosting services
+                            result["direct_url"] = rules['direct_format'].format(match.group(1))
+                    else:
+                        # Use original URL for hosts without direct URL pattern
+                        result["direct_url"] = url
         
-        # Check if response is successful and content type is an image
-        content_type = response.headers.get('Content-Type', '')
-        return response.status_code == 200 and content_type.startswith('image/')
+        # No direct URL detected, use original
+        if not result["direct_url"]:
+            result["direct_url"] = url
+            
+        # Now validate by actually sending a request
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+        }
+        
+        # Some services block HEAD requests, try GET with stream=True instead
+        response = requests.get(result["direct_url"], headers=headers, timeout=TIMEOUT_SECONDS, stream=True, 
+                               allow_redirects=True)
+        
+        # Check if response status is successful
+        if response.status_code == 200:
+            # Get the final URL after any redirects
+            result["direct_url"] = response.url
+            
+            # Check content type
+            content_type = response.headers.get('Content-Type', '')
+            result["content_type"] = content_type
+            
+            # Only download a small portion to check content
+            content_chunk = next(response.iter_content(chunk_size=1024), None)
+            
+            # Validate by content type or extension
+            if content_type.startswith('image/') or any(url_lower.endswith(ext) for ext in IMAGE_EXTENSIONS):
+                result["valid"] = True
+                
+                # Extract file extension from content-type if available
+                if content_type.startswith('image/'):
+                    extension = content_type.split('/')[1].split(';')[0]
+                    result["file_extension"] = extension
+                    
+            else:
+                result["error"] = f"Not an image (content-type: {content_type})"
+                
+        else:
+            result["error"] = f"Failed to access image URL (status code: {response.status_code})"
+    
+    except requests.exceptions.Timeout:
+        result["error"] = "Request timed out when checking image"
+    except requests.exceptions.TooManyRedirects:
+        result["error"] = "Too many redirects when following image URL" 
+    except requests.exceptions.RequestException as e:
+        result["error"] = f"Error accessing image URL: {str(e)}"
     except Exception as e:
+        result["error"] = f"Unexpected error validating image URL: {str(e)}"
         logging.error(f"Error validating image URL: {e}")
-        return False
+    
+    logging.info(f"Image validation result: {result}")
+    return result
 
 def check_platform(username, platform, url, results, stats_lock, platform_stats):
     """
@@ -317,9 +404,25 @@ def check_social_media(username, image_link=None):
     reverse_image_urls = None
     image_metadata = None
     
-    if image_link and validate_image_url(image_link):
-        # Encode image URL for embedding in search URLs
-        encoded_image_url = quote_plus(image_link)
+    if image_link:
+        # Validate the image URL with our enhanced validation
+        validation_result = validate_image_url(image_link)
+        
+        # Setup image metadata based on validation result
+        image_metadata = {
+            "url": image_link,  # Original URL
+            "validated": validation_result.get("valid", False),
+            "error": validation_result.get("error", None) if not validation_result.get("valid", False) else None,
+            "content_type": validation_result.get("content_type"),
+            "source": validation_result.get("source")
+        }
+        
+        # Get the direct URL from validation if available, otherwise use original
+        direct_url = validation_result.get("direct_url", image_link) or image_link
+        
+        # Always create search URLs (even for invalid images) to allow frontend to handle accordingly
+        # Just because our validation may fail doesn't mean search engines can't process the image
+        encoded_image_url = quote_plus(direct_url)
         
         reverse_image_urls = {
             "Google": f"https://lens.google.com/uploadbyurl?url={encoded_image_url}",
@@ -329,19 +432,13 @@ def check_social_media(username, image_link=None):
             "TinEye": f"https://tineye.com/search?url={encoded_image_url}"
         }
         
-        # Add image metadata
-        image_metadata = {
-            "url": image_link,
-            "validated": True,
-            "search_engines": len(reverse_image_urls)
-        }
-    elif image_link:
-        # If image URL is provided but invalid
-        image_metadata = {
-            "url": image_link,
-            "validated": False,
-            "error": "Invalid image URL or unreachable image"
-        }
+        # Update search engines count
+        image_metadata["search_engines"] = len(reverse_image_urls)
+        
+        # Force validation to true for Facebook URLs to allow reverse image search to work
+        # This is a special case as Facebook blocks direct image validation but reverse engines can still work
+        if "facebook.com" in image_link.lower() and not validation_result.get("valid", False):
+            image_metadata["validated"] = True
     
     # Compile statistics
     stats = {
