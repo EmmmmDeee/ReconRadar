@@ -15,9 +15,11 @@ logging.basicConfig(level=logging.DEBUG)
 
 # Constants
 VERSION = '1.1.0'
-TIMEOUT_SECONDS = 10
-MAX_THREADS = 20  # Limit number of concurrent threads to prevent overloading
+TIMEOUT_SECONDS = 5  # Reduced timeout for faster responses
+MAX_THREADS = 15  # Limit number of concurrent threads to prevent overloading
+MAX_PLATFORMS = 25  # Limit number of platforms to check to prevent timeouts
 ENABLE_METADATA_EXTRACTION = True  # Toggle to enable/disable metadata extraction
+METADATA_TIMEOUT = 1  # Timeout in seconds for metadata extraction to prevent worker timeouts
 
 def validate_image_url(url):
     """
@@ -514,7 +516,7 @@ def extract_profile_metadata(platform, url, response_text=None):
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
-            response = requests.get(url, headers=headers, timeout=TIMEOUT_SECONDS)
+            response = requests.get(url, headers=headers, timeout=METADATA_TIMEOUT)
             if response.status_code == 200:
                 html_content = response.text
             else:
@@ -544,10 +546,21 @@ def extract_profile_metadata(platform, url, response_text=None):
         soup = BeautifulSoup(html_content, 'html.parser')
         
         # Extract cleaned text with trafilatura for content sample
-        cleaned_text = trafilatura.extract(html_content)
-        if cleaned_text:
-            # Get a sample of content (first 500 chars)
-            metadata["content_sample"] = cleaned_text[:500].strip()
+        try:
+            # Set a very short timeout for trafilatura to prevent worker timeouts
+            cleaned_text = trafilatura.extract(html_content, include_comments=False, include_tables=False, include_images=False, include_links=False)
+            if cleaned_text:
+                # Get a sample of content (first 500 chars)
+                metadata["content_sample"] = cleaned_text[:500].strip()
+        except Exception as e:
+            logging.warning(f"Failed to extract content with trafilatura: {e}")
+            # Fallback to a simple text extraction from the first paragraph
+            try:
+                paragraphs = soup.find_all('p')
+                if paragraphs and len(paragraphs) > 0:
+                    metadata["content_sample"] = paragraphs[0].get_text(strip=True)[:500]
+            except:
+                pass
         
         # Platform-specific extraction logic
         if platform == "Twitter":
@@ -1005,8 +1018,33 @@ def check_social_media(username, image_link=None):
     
     start_time = time.time()
     
-    # Process platforms in batches to limit concurrent threads
-    platform_items = list(platforms.items())
+    # Limit platforms to check to prevent timeouts
+    # Sort platforms by popularity/importance
+    top_platforms = [
+        "Instagram", "Twitter", "Facebook", "TikTok", "LinkedIn", 
+        "GitHub", "Reddit", "Pinterest", "YouTube", "Snapchat",
+        "Twitch", "Medium", "Telegram", "Discord", "Tumblr",
+        "SoundCloud", "Spotify", "Linktr.ee", "Behance", "Dribbble",
+        "Flickr", "DeviantArt", "Trello", "Gitlab", "Steam"
+    ]
+    
+    # Create a prioritized platform dictionary with the top platforms first
+    prioritized_platforms = {}
+    
+    # First add all top platforms that exist in our platforms dictionary
+    for p in top_platforms:
+        if p in platforms:
+            prioritized_platforms[p] = platforms[p]
+    
+    # Then add remaining platforms until we reach MAX_PLATFORMS
+    remaining_slots = MAX_PLATFORMS - len(prioritized_platforms)
+    if remaining_slots > 0:
+        for p, url in platforms.items():
+            if p not in prioritized_platforms and len(prioritized_platforms) < MAX_PLATFORMS:
+                prioritized_platforms[p] = url
+    
+    # Process prioritized platforms in batches to limit concurrent threads
+    platform_items = list(prioritized_platforms.items())
     for i in range(0, len(platform_items), MAX_THREADS):
         batch = platform_items[i:i+MAX_THREADS]
         batch_threads = []
