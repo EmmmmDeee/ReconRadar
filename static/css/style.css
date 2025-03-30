@@ -1,53 +1,201 @@
 /* Custom styles to complement the Bootstrap theme */
 
-/* Add a subtle background pattern */
+/* Modern dark theme with subtle background pattern */
 body {
     background-color: var(--bs-dark);
+    background-image: linear-gradient(to bottom right, rgba(30, 30, 30, 0.7), rgba(20, 20, 20, 0.7));
+    background-attachment: fixed;
     min-height: 100vh;
+    color: var(--bs-light);
 }
 
-/* Card and container styling */
+/* Improved card styling with glass-like effect */
 .card {
-    border-radius: 10px;
+    border-radius: 14px;
     border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    background-color: rgba(33, 37, 41, 0.85);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    margin-bottom: 2rem;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
 }
 
 .card-header {
-    border-radius: 10px 10px 0 0 !important;
+    border-radius: 14px 14px 0 0 !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 1.2rem 1.5rem;
 }
 
-/* Header styling */
+.card-body {
+    padding: 1.5rem;
+}
+
+/* Enhanced header styling */
 header h1 {
-    font-weight: 700;
+    font-weight: 800;
     letter-spacing: -1px;
+    text-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    margin-bottom: 0.5rem;
+}
+
+header .lead {
+    font-size: 1.3rem;
+    opacity: 0.9;
+    max-width: 700px;
+    margin: 0 auto;
+}
+
+/* Button styling */
+.btn {
+    padding: 0.75rem 1.5rem;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #17a2b8, #138496);
+    border: none;
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, #138496, #0f6674);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 10px rgba(0, 0, 0, 0.15);
+}
+
+/* Improved form controls */
+.form-control, .form-select {
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    background-color: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--bs-light);
+}
+
+.form-control:focus, .form-select:focus {
+    background-color: rgba(0, 0, 0, 0.3);
+    border-color: rgba(23, 162, 184, 0.5);
+    box-shadow: 0 0 0 0.25rem rgba(23, 162, 184, 0.25);
+}
+
+.form-label {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: rgba(255, 255, 255, 0.9);
 }
 
 /* Profile list item styling */
 .list-group-item {
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--bs-light);
+    padding: 1rem 1.25rem;
+    margin-bottom: 0.5rem;
+    border-radius: 8px !important;
     transition: all 0.2s ease;
 }
 
 .list-group-item:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    background-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.list-group-item i {
+    margin-right: 0.5rem;
+    width: 20px;
+    text-align: center;
 }
 
 /* Footer styling */
 footer {
-    opacity: 0.7;
+    opacity: 0.8;
+    padding-top: 3rem;
+    padding-bottom: 1rem;
 }
 
 footer a {
     text-decoration: none;
+    margin: 0 0.5rem;
+    transition: color 0.2s ease;
 }
 
 footer a:hover {
-    text-decoration: underline;
+    color: var(--bs-info) !important;
+    text-decoration: none;
 }
 
 /* Loading spinner styles */
+#loading {
+    padding: 3rem 0;
+}
+
 #loading .spinner-border {
-    width: 3rem;
-    height: 3rem;
+    width: 3.5rem;
+    height: 3.5rem;
+    border-width: 0.3rem;
+}
+
+/* Table styling */
+.table {
+    border-collapse: separate;
+    border-spacing: 0;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.table th {
+    background-color: rgba(0, 0, 0, 0.2);
+    font-weight: 600;
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.table td {
+    border-color: rgba(255, 255, 255, 0.05);
+}
+
+.table-bordered {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Custom badge styling */
+.badge {
+    padding: 0.5rem 0.8rem;
+    font-weight: 600;
+    border-radius: 50px;
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.5s ease forwards;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.1);
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
 }

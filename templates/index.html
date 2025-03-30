@@ -6,70 +6,132 @@
     <title>unve1ler - OSINT Username & Image Search Tool</title>
     <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/animate.css@4.1.1/animate.min.css">
     <link rel="stylesheet" href="/static/css/style.css">
+    <meta name="description" content="unve1ler is an OSINT tool for discovering online profiles by username and performing reverse image searches">
 </head>
 <body>
     <div class="container">
-        <header class="my-5 text-center">
-            <h1 class="display-4 text-info">
+        <header class="my-5 text-center animate__animated animate__fadeIn">
+            <div class="mb-3">
+                <span class="badge bg-danger">OSINT</span>
+                <span class="badge bg-info">Digital Forensics</span>
+            </div>
+            <h1 class="display-3 text-info">
                 <i class="fa fa-search"></i> unve1ler
             </h1>
-            <p class="lead">Revealing Digital Footprints and Visual Clues on the Internet</p>
+            <p class="lead mb-4">Revealing Digital Footprints and Visual Clues on the Internet</p>
+            <p class="text-muted mb-5 small">A powerful tool for open-source intelligence gathering</p>
         </header>
 
-        <div class="card mb-5">
-            <div class="card-body">
-                <form id="search-form" class="needs-validation" novalidate>
-                    <div class="mb-3">
-                        <label for="username" class="form-label">Target Username</label>
-                        <input type="text" class="form-control" id="username" placeholder="Enter username to search" required>
-                        <div class="invalid-feedback">
-                            Please enter a username to search.
-                        </div>
+        <div class="row justify-content-center">
+            <div class="col-lg-8">
+                <div class="card mb-5 animate__animated animate__fadeInUp">
+                    <div class="card-header bg-dark">
+                        <h3 class="card-title text-info mb-0">
+                            <i class="fa fa-user-secret me-2"></i>OSINT Search
+                        </h3>
                     </div>
-                    
-                    <div class="mb-3">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="has-image">
-                            <label class="form-check-label" for="has-image">
-                                I have an image of the target
-                            </label>
-                        </div>
+                    <div class="card-body">
+                        <form id="search-form" class="needs-validation" novalidate>
+                            <div class="mb-4">
+                                <label for="username" class="form-label">Target Username</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">
+                                        <i class="fa fa-user"></i>
+                                    </span>
+                                    <input type="text" class="form-control form-control-lg" id="username" placeholder="Enter username to search" required>
+                                </div>
+                                <div class="invalid-feedback">
+                                    Please enter a username to search.
+                                </div>
+                                <div class="form-text text-info">
+                                    <i class="fa fa-info-circle"></i> We'll search over 80+ platforms for this username
+                                </div>
+                            </div>
+                            
+                            <div class="mb-4">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="has-image">
+                                    <label class="form-check-label" for="has-image">
+                                        <i class="fa fa-image me-1"></i> Enable reverse image search
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <div id="image-url-container" class="mb-4 d-none animate__animated animate__fadeIn">
+                                <label for="image-url" class="form-label">Image URL</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">
+                                        <i class="fa fa-link"></i>
+                                    </span>
+                                    <input type="url" class="form-control" id="image-url" placeholder="Enter image URL" disabled>
+                                </div>
+                                <div class="invalid-feedback">
+                                    Please enter a valid URL for the image.
+                                </div>
+                                <div class="form-text mt-2">
+                                    <i class="fa fa-info-circle text-info"></i> The image will be used for reverse image search across multiple search engines including:
+                                    <div class="mt-2 d-flex justify-content-center gap-3">
+                                        <span class="badge bg-light text-dark"><i class="fa fa-google text-danger"></i> Google Lens</span>
+                                        <span class="badge bg-light text-dark"><i class="fa fa-windows text-primary"></i> Bing</span>
+                                        <span class="badge bg-light text-dark"><i class="fa fa-search text-warning"></i> Yandex</span>
+                                        <span class="badge bg-light text-dark"><i class="fa fa-globe text-info"></i> Baidu</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="d-grid gap-2">
+                                <button type="submit" class="btn btn-primary btn-lg">
+                                    <i class="fa fa-search me-2"></i> Search Profiles
+                                </button>
+                                <button type="reset" class="btn btn-outline-secondary">
+                                    <i class="fa fa-refresh me-2"></i> Reset Form
+                                </button>
+                            </div>
+                        </form>
                     </div>
-                    
-                    <div id="image-url-container" class="mb-3 d-none">
-                        <label for="image-url" class="form-label">Image URL</label>
-                        <input type="url" class="form-control" id="image-url" placeholder="Enter image URL" disabled>
-                        <div class="invalid-feedback">
-                            Please enter a valid URL for the image.
-                        </div>
-                        <small class="form-text text-muted">
-                            The image will be used for reverse image search across multiple search engines.
-                        </small>
-                    </div>
-                    
-                    <button type="submit" class="btn btn-primary w-100">
-                        <i class="fa fa-search"></i> Search Profiles
-                    </button>
-                </form>
+                </div>
             </div>
         </div>
 
-        <div id="loading" class="my-5 text-center d-none">
-            <div class="spinner-border text-info" role="status">
-                <span class="visually-hidden">Loading...</span>
+        <div id="loading" class="my-5 text-center d-none animate__animated animate__fadeIn">
+            <div class="card">
+                <div class="card-body py-5">
+                    <div class="spinner-border text-info" role="status" style="width: 4rem; height: 4rem;">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-4 lead">Searching for digital footprints...</p>
+                    <p class="text-muted">This may take a moment as we scan multiple platforms</p>
+                    <div class="progress mt-4" style="height: 10px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" style="width: 100%"></div>
+                    </div>
+                </div>
             </div>
-            <p class="mt-3">Searching for profiles... This may take a moment.</p>
         </div>
 
-        <div id="results-container" class="d-none">
+        <div id="results-container" class="animate__animated animate__fadeIn d-none">
             <div class="card mb-4">
                 <div class="card-header bg-info text-white">
-                    <h3 class="card-title mb-0">Search Results</h3>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h3 class="card-title mb-0">
+                            <i class="fa fa-list-alt me-2"></i>Search Results
+                        </h3>
+                        <button id="export-results" class="btn btn-sm btn-dark">
+                            <i class="fa fa-download me-1"></i> Export
+                        </button>
+                    </div>
                 </div>
                 <div class="card-body">
+                    <div class="alert alert-info mb-4">
+                        <i class="fa fa-info-circle me-2"></i> 
+                        <span id="result-summary">Results for your search will appear here</span>
+                    </div>
+                
                     <div class="mb-4">
-                        <h4>Target Information</h4>
+                        <h4 class="border-bottom border-secondary pb-2">
+                            <i class="fa fa-user-circle me-2"></i>Target Information
+                        </h4>
                         <div class="table-responsive">
                             <table class="table table-bordered">
                                 <tbody>
@@ -106,38 +168,70 @@
                         </div>
                     </div>
 
-                    <div id="profiles-found-container" class="mb-4">
-                        <h4>Profiles Found</h4>
-                        <p class="text-muted small">Note: There can be false positive links</p>
+                    <div id="profiles-found-container" class="mb-4 d-none">
+                        <h4 class="d-flex justify-content-between align-items-center border-bottom border-secondary pb-2">
+                            <span><i class="fa fa-check-circle me-2 text-success"></i>Profiles Found</span>
+                            <span class="badge bg-success" id="profile-count">0</span>
+                        </h4>
+                        <p class="text-muted small">
+                            <i class="fa fa-info-circle"></i> Note: Some results may be false positives. Verify each profile manually.
+                        </p>
+                        <div class="input-group mb-3">
+                            <span class="input-group-text"><i class="fa fa-filter"></i></span>
+                            <input type="text" class="form-control" id="profile-filter" placeholder="Filter profiles...">
+                        </div>
                         <div id="profiles-list" class="list-group">
                             <!-- Profiles will be added here dynamically -->
                         </div>
                     </div>
 
                     <div id="reverse-image-container" class="d-none">
-                        <h4>Reverse Image Search</h4>
-                        <p>Use these links to search for the provided image:</p>
-                        <div id="reverse-image-links" class="list-group">
+                        <h4 class="border-bottom border-secondary pb-2">
+                            <i class="fa fa-camera me-2"></i>Reverse Image Search
+                        </h4>
+                        <p>Use these services to search for the provided image:</p>
+                        <div class="row row-cols-1 row-cols-md-2 g-4" id="reverse-image-links">
                             <!-- Reverse image search links will be added here dynamically -->
                         </div>
                     </div>
                 </div>
             </div>
+
+            <div class="text-center mb-4">
+                <button id="new-search-btn" class="btn btn-outline-info">
+                    <i class="fa fa-search me-2"></i> New Search
+                </button>
+            </div>
         </div>
 
-        <footer class="my-5 pt-5 text-muted text-center">
-            <p>unve1ler v1.0.1 - OSINT Username & Image Search Tool</p>
-            <p>
-                <a href="https://github.com/spyboy-productions/unve1ler" target="_blank" class="text-info">
-                    <i class="fa fa-github"></i> GitHub
-                </a> | 
-                <a href="https://spyboy.in/" target="_blank" class="text-info">
-                    <i class="fa fa-globe"></i> Website
-                </a> | 
-                <a href="https://spyboy.blog/" target="_blank" class="text-info">
-                    <i class="fa fa-rss"></i> Blog
-                </a>
-            </p>
+        <footer class="my-5 pt-5 text-center">
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <h5>About unve1ler</h5>
+                    <p class="small">An OSINT tool for digital footprint discovery and image analysis</p>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <h5>Version</h5>
+                    <p class="badge bg-info">v1.0.1</p>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <h5>Links</h5>
+                    <div class="d-flex justify-content-center gap-3">
+                        <a href="https://github.com/spyboy-productions/unve1ler" target="_blank" class="text-info">
+                            <i class="fa fa-github fa-lg"></i>
+                        </a>
+                        <a href="https://spyboy.in/" target="_blank" class="text-info">
+                            <i class="fa fa-globe fa-lg"></i>
+                        </a>
+                        <a href="https://spyboy.blog/" target="_blank" class="text-info">
+                            <i class="fa fa-rss fa-lg"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-4 text-muted small">
+                <p>&copy; 2025 spyboy productions - For educational purposes only</p>
+            </div>
         </footer>
     </div>
     
