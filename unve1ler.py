@@ -14,12 +14,12 @@ import hashlib
 logging.basicConfig(level=logging.DEBUG)
 
 # Constants
-VERSION = '1.1.0'
-TIMEOUT_SECONDS = 5  # Reduced timeout for faster responses
-MAX_THREADS = 15  # Limit number of concurrent threads to prevent overloading
-MAX_PLATFORMS = 25  # Limit number of platforms to check to prevent timeouts
+VERSION = '1.1.2'
+TIMEOUT_SECONDS = 5  # Balanced timeout for better results
+MAX_THREADS = 15  # Increased threads for more parallel processing
+MAX_PLATFORMS = 40  # Increased platforms to get more results
+METADATA_TIMEOUT = 2  # Slightly increased metadata timeout for better extraction
 ENABLE_METADATA_EXTRACTION = True  # Toggle to enable/disable metadata extraction
-METADATA_TIMEOUT = 1  # Timeout in seconds for metadata extraction to prevent worker timeouts
 
 def validate_image_url(url):
     """
@@ -483,6 +483,8 @@ def extract_profile_metadata(platform, url, response_text=None):
     Returns:
         dict: Dictionary containing extracted metadata
     """
+    # Use a shorter timeout to prevent worker process from hanging
+    global METADATA_TIMEOUT
     # Initialize metadata dictionary
     metadata = {
         "platform": platform,
@@ -900,6 +902,8 @@ def check_social_media(username, image_link=None):
     Returns:
         tuple: (results, stats, reverse_image_urls, platform_metadata, image_metadata)
     """
+    # Ensure we only check a limited number of platforms to prevent worker timeouts
+    global MAX_PLATFORMS, TIMEOUT_SECONDS, MAX_THREADS
     # Generate username variations
     username_variations = generate_username_variations(username)
     
