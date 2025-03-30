@@ -129,7 +129,7 @@ def validate_image_url(url):
     logging.info(f"Image validation result: {result}")
     return result
 
-def check_platform(username, platform, url, results, stats_lock, platform_stats):
+def check_platform(username, platform, url, results, stats_lock, platform_stats, variations=None):
     """
     Check if a username exists on a specific platform.
     
@@ -140,6 +140,7 @@ def check_platform(username, platform, url, results, stats_lock, platform_stats)
         results (dict): Dictionary to store results
         stats_lock (threading.Lock): Lock for updating platform stats
         platform_stats (dict): Dictionary to store platform statistics
+        variations (list, optional): List of username variations to try if the main username fails
     """
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -162,9 +163,19 @@ def check_platform(username, platform, url, results, stats_lock, platform_stats)
         if response.status_code == 200:
             logging.debug(f"Profile found on {platform}: {url}")
             results[platform] = url
+            return True  # Profile found, no need to try variations
         else:
-            logging.debug(f"Profile not found on {platform}")
+            logging.debug(f"Profile not found on {platform} with primary username")
+            
+            # Try username variations if provided and initial check failed
+            if variations:
+                found = try_username_variations(platform, variations, results, stats_lock, platform_stats)
+                if found:
+                    return True  # Found with a variation
+            
+            # If we reach here, no profile was found with any variation
             results[platform] = None
+            return False
 
     except requests.exceptions.Timeout:
         logging.warning(f"Timeout while checking {platform}")
@@ -174,6 +185,7 @@ def check_platform(username, platform, url, results, stats_lock, platform_stats)
                 'status_code': 'timeout'
             }
         results[platform] = None
+        return False
         
     except requests.exceptions.RequestException as e:
         logging.error(f"An error occurred while checking {platform}: {e}")
@@ -184,6 +196,79 @@ def check_platform(username, platform, url, results, stats_lock, platform_stats)
                 'error': str(e)
             }
         results[platform] = None
+        return False
+
+def try_username_variations(platform, variations, results, stats_lock, platform_stats):
+    """
+    Try different username variations for a platform.
+    
+    Args:
+        platform (str): Platform name
+        variations (list): List of username variations to try
+        results (dict): Dictionary to store results
+        stats_lock (threading.Lock): Lock for updating platform stats
+        platform_stats (dict): Dictionary to store platform statistics
+        
+    Returns:
+        bool: True if a profile is found with any variation, False otherwise
+    """
+    # Skip the first variation as it's the primary username already checked
+    for var in variations[1:]:
+        # Clean variation to ensure it's valid for URLs
+        clean_var = re.sub(r'[^\w.-]', '', var)
+        
+        # Generate the URL for this platform with this variation
+        var_url = ""
+        if platform == "Instagram":
+            var_url = f"https://www.instagram.com/{clean_var}/"
+        elif platform == "Twitter":
+            var_url = f"https://twitter.com/{clean_var}"
+        elif platform == "GitHub":
+            var_url = f"https://github.com/{clean_var}"
+        elif platform == "TikTok":
+            var_url = f"https://www.tiktok.com/@{clean_var}"
+        elif platform == "Telegram":
+            var_url = f"https://t.me/{clean_var}"
+        # Add more platforms as needed
+        else:
+            # For others, try to replace username in the existing URL pattern
+            # This is a basic approach that won't work for all platforms
+            var_url = results[platform] if platform in results else ""
+            if not var_url:
+                continue
+        
+        # Skip if we couldn't generate a URL
+        if not var_url:
+            continue
+            
+        # Now check this variation
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            
+            start_time = time.time()
+            response = requests.get(var_url, headers=headers, timeout=TIMEOUT_SECONDS)
+            response_time = time.time() - start_time
+            
+            if response.status_code == 200:
+                logging.debug(f"Profile found on {platform} with variation '{var}': {var_url}")
+                
+                # Update results and stats
+                results[platform] = var_url
+                with stats_lock:
+                    platform_stats[platform] = {
+                        'response_time': response_time,
+                        'status_code': response.status_code,
+                        'variation_used': var
+                    }
+                return True
+                
+        except Exception as e:
+            logging.debug(f"Error checking variation '{var}' on {platform}: {e}")
+            continue
+    
+    return False
 
 def categorize_platforms(platforms):
     """
@@ -220,6 +305,54 @@ def categorize_platforms(platforms):
     
     return platform_categories
 
+def generate_username_variations(username):
+    """
+    Generate common variations of a username that people often use across platforms.
+    
+    Args:
+        username (str): Base username to generate variations from
+        
+    Returns:
+        list: List of username variations
+    """
+    variations = [username]  # Start with the original
+    
+    # Remove special characters for a clean base
+    clean_base = re.sub(r'[^\w]', '', username)
+    if clean_base != username:
+        variations.append(clean_base)
+    
+    # Common separator variations (dots, underscores, dashes)
+    if '.' in username:
+        variations.append(username.replace('.', '_'))
+        variations.append(username.replace('.', '-'))
+        variations.append(username.replace('.', ''))
+    
+    if '_' in username:
+        variations.append(username.replace('_', '.'))
+        variations.append(username.replace('_', '-'))
+        variations.append(username.replace('_', ''))
+    
+    if '-' in username:
+        variations.append(username.replace('-', '.'))
+        variations.append(username.replace('-', '_'))
+        variations.append(username.replace('-', ''))
+    
+    # Common capitalization variations
+    if username.islower():
+        variations.append(username.capitalize())
+    
+    if username.isupper():
+        variations.append(username.lower())
+    
+    # Remove duplicates while preserving order
+    unique_variations = []
+    for var in variations:
+        if var not in unique_variations:
+            unique_variations.append(var)
+    
+    return unique_variations
+
 def check_social_media(username, image_link=None):
     """
     Check social media platforms for a username and generate reverse image search links.
@@ -229,9 +362,13 @@ def check_social_media(username, image_link=None):
         image_link (str, optional): URL to an image for reverse image search
         
     Returns:
-        tuple: (results, stats, reverse_image_urls, platform_metadata)
+        tuple: (results, stats, reverse_image_urls, platform_metadata, image_metadata)
     """
-    # Clean the username (remove special chars that might cause issues)
+    # Generate username variations
+    username_variations = generate_username_variations(username)
+    
+    # Use the provided username as primary and clean it
+    primary_username = username
     clean_username = re.sub(r'[^\w.-]', '', username)
     
     # Dictionary mapping platform names to their URL patterns
@@ -354,7 +491,7 @@ def check_social_media(username, image_link=None):
         # Create and start threads for this batch
         for platform, url in batch:
             thread = threading.Thread(target=check_platform, 
-                                     args=(clean_username, platform, url, results, stats_lock, platform_stats))
+                                     args=(clean_username, platform, url, results, stats_lock, platform_stats, username_variations))
             thread.start()
             batch_threads.append(thread)
             threads.append(thread)
@@ -440,11 +577,21 @@ def check_social_media(username, image_link=None):
         if "facebook.com" in image_link.lower() and not validation_result.get("valid", False):
             image_metadata["validated"] = True
     
+    # Compile statistics and information about username variations
+    variations_used = {}
+    
+    # Check which platforms were found using which username variations
+    for platform, platform_data in platform_stats.items():
+        if platform in found_profiles and 'variation_used' in platform_data:
+            variations_used[platform] = platform_data['variation_used']
+    
     # Compile statistics
     stats = {
         "target": username,
         "platforms_checked": len(platforms),
         "platforms_list": list(platforms.keys()),
+        "username_variations": username_variations,
+        "variations_used": variations_used,
         "time_taken": f"{elapsed_time:.2f}",
         "date": formatted_date,
         "profiles_found": found_count,
