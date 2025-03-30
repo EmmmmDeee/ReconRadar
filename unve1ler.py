@@ -3,17 +3,21 @@ import threading
 import time
 from datetime import datetime
 import logging
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 import json
 import re
+from bs4 import BeautifulSoup
+import trafilatura
+import hashlib
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 
 # Constants
-VERSION = '1.0.2'
+VERSION = '1.1.0'
 TIMEOUT_SECONDS = 10
 MAX_THREADS = 20  # Limit number of concurrent threads to prevent overloading
+ENABLE_METADATA_EXTRACTION = True  # Toggle to enable/disable metadata extraction
 
 def validate_image_url(url):
     """
@@ -155,12 +159,13 @@ def check_platform(username, platform, url, results, stats_lock, platform_stats,
         end_time = time.time()
         response_time = end_time - start_time
         
-        # Store response metadata
+        # Store response metadata including text for metadata extraction
         with stats_lock:
             platform_stats[platform] = {
                 'response_time': response_time,
                 'status_code': response.status_code,
-                'final_url': response.url
+                'final_url': response.url,
+                'response_text': response.text if ENABLE_METADATA_EXTRACTION else None
             }
         
         # Define platform-specific validation patterns
@@ -453,7 +458,8 @@ def try_username_variations(platform, variations, results, stats_lock, platform_
                         'status_code': response.status_code,
                         'variation_used': var,
                         'validated': True,
-                        'final_url': response.url
+                        'final_url': response.url,
+                        'response_text': response.text if ENABLE_METADATA_EXTRACTION else None
                     }
                 return True
                 
@@ -462,6 +468,258 @@ def try_username_variations(platform, variations, results, stats_lock, platform_
             continue
     
     return False
+
+def extract_profile_metadata(platform, url, response_text=None):
+    """
+    Extract metadata from a social media profile.
+    
+    Args:
+        platform (str): Platform name
+        url (str): URL of the profile
+        response_text (str, optional): HTML content of the profile page if already fetched
+        
+    Returns:
+        dict: Dictionary containing extracted metadata
+    """
+    # Initialize metadata dictionary
+    metadata = {
+        "platform": platform,
+        "url": url,
+        "username": None,
+        "name": None,
+        "bio": None,
+        "followers_count": None,
+        "following_count": None,
+        "posts_count": None,
+        "location": None,
+        "website": None,
+        "join_date": None,
+        "avatar_url": None,
+        "banner_url": None,
+        "verified": None,
+        "last_active": None,
+        "connections": [],
+        "profile_id": None,
+        "content_sample": []
+    }
+    
+    # Skip extraction if disabled
+    if not ENABLE_METADATA_EXTRACTION:
+        return metadata
+    
+    # Get HTML content if not provided
+    html_content = response_text
+    if not html_content:
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            response = requests.get(url, headers=headers, timeout=TIMEOUT_SECONDS)
+            if response.status_code == 200:
+                html_content = response.text
+            else:
+                return metadata  # Return empty metadata if can't fetch content
+        except Exception as e:
+            logging.error(f"Error fetching profile content for {platform}: {e}")
+            return metadata
+    
+    if not html_content:
+        return metadata
+        
+    try:
+        # Extract username from URL
+        parsed_url = urlparse(url)
+        path_parts = parsed_url.path.strip('/').split('/')
+        if len(path_parts) > 0:
+            metadata["username"] = path_parts[-1]
+            # Some platforms have @ in usernames
+            if metadata["username"].startswith('@'):
+                metadata["username"] = metadata["username"][1:]
+        
+        # Create a unique profile ID using hash
+        profile_hash = hashlib.md5(url.encode()).hexdigest()
+        metadata["profile_id"] = f"{platform.lower()}_{profile_hash[:8]}"
+        
+        # Parse HTML with BeautifulSoup
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Extract cleaned text with trafilatura for content sample
+        cleaned_text = trafilatura.extract(html_content)
+        if cleaned_text:
+            # Get a sample of content (first 500 chars)
+            metadata["content_sample"] = cleaned_text[:500].strip()
+        
+        # Platform-specific extraction logic
+        if platform == "Twitter":
+            # Extract name
+            name_elem = soup.select_one('h1[data-testid="primaryColumn"] span')
+            if name_elem:
+                metadata["name"] = name_elem.get_text(strip=True)
+            
+            # Extract bio
+            bio_elem = soup.select_one('div[data-testid="primaryColumn"] div[data-testid="UserDescription"]')
+            if bio_elem:
+                metadata["bio"] = bio_elem.get_text(strip=True)
+            
+            # Extract follower counts
+            followers_elem = soup.select_one('a[href*="/followers"] span')
+            if followers_elem:
+                followers_text = followers_elem.get_text(strip=True)
+                metadata["followers_count"] = followers_text
+            
+            # Extract following count
+            following_elem = soup.select_one('a[href*="/following"] span')
+            if following_elem:
+                following_text = following_elem.get_text(strip=True)
+                metadata["following_count"] = following_text
+                
+            # Extract avatar
+            avatar_elem = soup.select_one('img[src*="profile_images"]')
+            if avatar_elem and avatar_elem.has_attr('src'):
+                metadata["avatar_url"] = avatar_elem['src']
+                
+            # Check verification
+            verified_elem = soup.select_one('svg[data-testid="icon-verified"]')
+            metadata["verified"] = verified_elem is not None
+                
+        elif platform == "Instagram":
+            # Instagram often redirects to login, but we can try to extract from meta tags
+            meta_title = soup.select_one('meta[property="og:title"]')
+            if meta_title and meta_title.has_attr('content'):
+                title_content = meta_title['content']
+                if isinstance(title_content, str) and '•' in title_content:
+                    metadata["name"] = title_content.split('•')[0].strip()
+                else:
+                    metadata["name"] = title_content
+                
+            # Try to get bio from meta description
+            meta_desc = soup.select_one('meta[property="og:description"]')
+            if meta_desc and meta_desc.has_attr('content'):
+                desc_text = meta_desc['content']
+                if isinstance(desc_text, str):  # Ensure desc_text is a string
+                    # Extract follower count if available
+                    follower_match = re.search(r'(\d+(?:\.\d+)?[km]?) Followers', desc_text, re.IGNORECASE)
+                    if follower_match:
+                        metadata["followers_count"] = follower_match.group(1)
+                    # Extract bio
+                    metadata["bio"] = desc_text
+                
+            # Get avatar from meta image
+            meta_image = soup.select_one('meta[property="og:image"]')
+            if meta_image and meta_image.has_attr('content'):
+                metadata["avatar_url"] = meta_image['content']
+                
+        elif platform == "GitHub":
+            # Extract name
+            name_elem = soup.select_one('span.p-name.vcard-fullname')
+            if name_elem:
+                metadata["name"] = name_elem.get_text(strip=True)
+                
+            # Extract bio
+            bio_elem = soup.select_one('div.p-note.user-profile-bio')
+            if bio_elem:
+                metadata["bio"] = bio_elem.get_text(strip=True)
+                
+            # Extract follower counts
+            followers_elem = soup.select_one('span.text-bold.color-fg-default')
+            if followers_elem:
+                metadata["followers_count"] = followers_elem.get_text(strip=True)
+                
+            # Extract location
+            location_elem = soup.select_one('li[itemprop="homeLocation"] span.p-label')
+            if location_elem:
+                metadata["location"] = location_elem.get_text(strip=True)
+                
+            # Extract website
+            website_elem = soup.select_one('li[itemprop="url"] a')
+            if website_elem and website_elem.has_attr('href'):
+                metadata["website"] = website_elem['href']
+                
+            # Extract join date
+            join_elem = soup.select_one('relative-time')
+            if join_elem and join_elem.has_attr('datetime'):
+                metadata["join_date"] = join_elem['datetime']
+                
+            # Extract avatar
+            avatar_elem = soup.select_one('img.avatar.avatar-user')
+            if avatar_elem and avatar_elem.has_attr('src'):
+                metadata["avatar_url"] = avatar_elem['src']
+                
+        elif platform == "LinkedIn":
+            # LinkedIn is usually heavily restricted, but try meta tags
+            meta_title = soup.select_one('meta[property="og:title"]')
+            if meta_title and meta_title.has_attr('content'):
+                metadata["name"] = meta_title['content']
+                
+            meta_desc = soup.select_one('meta[property="og:description"]')
+            if meta_desc and meta_desc.has_attr('content'):
+                metadata["bio"] = meta_desc['content']
+                
+            meta_image = soup.select_one('meta[property="og:image"]')
+            if meta_image and meta_image.has_attr('content'):
+                metadata["avatar_url"] = meta_image['content']
+                
+        elif platform == "TikTok":
+            # Extract name
+            name_elem = soup.select_one('h2.tiktok-arkop9-h2')
+            if name_elem:
+                metadata["name"] = name_elem.get_text(strip=True)
+                
+            # Extract bio
+            bio_elem = soup.select_one('h2.tiktok-arkop9-h2 + span')
+            if bio_elem:
+                metadata["bio"] = bio_elem.get_text(strip=True)
+                
+            # Extract follower count
+            follower_count = soup.select_one('strong[title="Followers"]')
+            if follower_count:
+                metadata["followers_count"] = follower_count.get_text(strip=True)
+                
+            # Extract following count
+            following_count = soup.select_one('strong[title="Following"]')
+            if following_count:
+                metadata["following_count"] = following_count.get_text(strip=True)
+                
+            # Extract likes count
+            likes_count = soup.select_one('strong[title="Likes"]')
+            if likes_count:
+                metadata["likes_count"] = likes_count.get_text(strip=True)
+                
+            # Extract profile image
+            avatar_elem = soup.select_one('img.tiktok-uha12h-img')
+            if avatar_elem and avatar_elem.has_attr('src'):
+                metadata["avatar_url"] = avatar_elem['src']
+                
+            # Verification
+            verified_badge = soup.select_one('svg.tiktok-shsbhf-svgverifiedbadge')
+            metadata["verified"] = verified_badge is not None
+                
+        # Add platform-specific extraction for other platforms as needed
+        
+        # Generic extraction from meta tags (works for many platforms)
+        if not metadata["name"]:
+            meta_name = soup.select_one('meta[property="og:title"], meta[name="twitter:title"]')
+            if meta_name and meta_name.has_attr('content'):
+                metadata["name"] = meta_name['content']
+                
+        if not metadata["bio"]:
+            meta_desc = soup.select_one('meta[property="og:description"], meta[name="twitter:description"], meta[name="description"]')
+            if meta_desc and meta_desc.has_attr('content'):
+                metadata["bio"] = meta_desc['content']
+                
+        if not metadata["avatar_url"]:
+            meta_image = soup.select_one('meta[property="og:image"], meta[name="twitter:image"]')
+            if meta_image and meta_image.has_attr('content'):
+                metadata["avatar_url"] = meta_image['content']
+        
+        # Remove None values for cleaner output
+        metadata = {k: v for k, v in metadata.items() if v is not None}
+        
+        return metadata
+        
+    except Exception as e:
+        logging.error(f"Error extracting metadata for {platform}: {str(e)}")
+        return metadata  # Return partially filled metadata
 
 def categorize_platforms(platforms):
     """
@@ -777,16 +1035,33 @@ def check_social_media(username, image_link=None):
     current_date = datetime.now()
     formatted_date = current_date.strftime("%Y-%m-%d %H:%M:%S")
     
-    # Compile found profiles
+    # Compile found profiles and extract metadata if enabled
+    profile_metadata_collection = {}
+    
     for platform, url in results.items():
         if url:
             found_profiles[platform] = url
+            
+            # Extract metadata if enabled
+            if ENABLE_METADATA_EXTRACTION:
+                try:
+                    # Pass response text from platform stats if available to avoid re-fetching
+                    response_text = None
+                    if platform in platform_stats and 'response_text' in platform_stats[platform]:
+                        response_text = platform_stats[platform]['response_text']
+                    
+                    # Extract metadata
+                    metadata = extract_profile_metadata(platform, url, response_text)
+                    profile_metadata_collection[platform] = metadata
+                except Exception as e:
+                    logging.error(f"Error extracting metadata for {platform}: {e}")
     
     # Generate platform metadata
     platform_metadata = {
         "categories": {},
         "response_times": {},
-        "status_codes": {}
+        "status_codes": {},
+        "detailed_metadata": profile_metadata_collection
     }
     
     # Populate platform metadata

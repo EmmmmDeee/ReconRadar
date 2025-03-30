@@ -364,34 +364,148 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Create a profile list item
     function createProfileListItem(platform, url) {
-        const item = document.createElement('a');
-        item.href = url;
-        item.target = '_blank';
+        // Create the main container div instead of <a> to allow for more complex content
+        const item = document.createElement('div');
         item.setAttribute('data-platform', platform.toLowerCase());
-        item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+        item.className = 'list-group-item list-group-item-action';
         
         // Try to add an icon if possible
         const iconClass = getIconClass(platform.toLowerCase());
         
-        // Create content with verification note
-        const content = document.createElement('div');
-        content.innerHTML = `
-            <div class="d-flex align-items-center">
-                <i class="${iconClass} me-3"></i>
+        // Check if we have metadata for this profile
+        let metadataHtml = '';
+        if (currentSearchResults && 
+            currentSearchResults.platform_metadata && 
+            currentSearchResults.platform_metadata.detailed_metadata && 
+            currentSearchResults.platform_metadata.detailed_metadata[platform]) {
+            
+            const metadata = currentSearchResults.platform_metadata.detailed_metadata[platform];
+            
+            // Build metadata section with collapsible details
+            const metadataId = `metadata-${platform.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+            metadataHtml = `
+                <div class="mt-3 border-top pt-3">
+                    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" 
+                            data-bs-target="#${metadataId}" aria-expanded="false">
+                        <i class="fa fa-info-circle me-1"></i> Show Profile Details
+                    </button>
+                    <div class="collapse mt-2" id="${metadataId}">
+                        <div class="card card-body bg-dark">
+                            <div class="row">
+                                ${metadata.avatar_url ? 
+                                `<div class="col-md-3 mb-3">
+                                    <img src="${metadata.avatar_url}" class="img-fluid rounded" alt="Profile picture">
+                                    ${metadata.verified ? '<span class="badge bg-info mt-2 d-block"><i class="fa fa-check-circle"></i> Verified</span>' : ''}
+                                </div>` : ''}
+                                
+                                <div class="${metadata.avatar_url ? 'col-md-9' : 'col-12'}">
+                                    ${metadata.name ? `<h5>${metadata.name}</h5>` : ''}
+                                    ${metadata.username ? `<p class="mb-1"><strong>Username:</strong> ${metadata.username}</p>` : ''}
+                                    ${metadata.bio ? `<p class="mb-2">${metadata.bio}</p>` : ''}
+                                    
+                                    <div class="row g-2 mb-2">
+                                        ${metadata.followers_count ? 
+                                        `<div class="col-auto">
+                                            <span class="badge bg-secondary">
+                                                <i class="fa fa-users me-1"></i> ${metadata.followers_count} followers
+                                            </span>
+                                        </div>` : ''}
+                                        
+                                        ${metadata.following_count ? 
+                                        `<div class="col-auto">
+                                            <span class="badge bg-secondary">
+                                                <i class="fa fa-user-plus me-1"></i> ${metadata.following_count} following
+                                            </span>
+                                        </div>` : ''}
+                                        
+                                        ${metadata.posts_count ? 
+                                        `<div class="col-auto">
+                                            <span class="badge bg-secondary">
+                                                <i class="fa fa-file-text me-1"></i> ${metadata.posts_count} posts
+                                            </span>
+                                        </div>` : ''}
+                                    </div>
+                                    
+                                    ${metadata.location ? 
+                                    `<p class="mb-1"><i class="fa fa-map-marker me-1"></i> ${metadata.location}</p>` : ''}
+                                    
+                                    ${metadata.website ? 
+                                    `<p class="mb-1">
+                                        <i class="fa fa-link me-1"></i> 
+                                        <a href="${metadata.website}" target="_blank">${metadata.website}</a>
+                                    </p>` : ''}
+                                    
+                                    ${metadata.join_date ? 
+                                    `<p class="mb-1"><i class="fa fa-calendar me-1"></i> Joined: ${metadata.join_date}</p>` : ''}
+                                    
+                                    ${metadata.content_sample ? 
+                                    `<div class="mt-3">
+                                        <small class="text-muted">Profile content sample:</small>
+                                        <div class="card p-2 bg-secondary mt-1">
+                                            <small>${metadata.content_sample.substring(0, 200)}${metadata.content_sample.length > 200 ? '...' : ''}</small>
+                                        </div>
+                                    </div>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Main profile section with link
+        item.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center">
+                    <i class="${iconClass} me-3"></i>
+                    <div>
+                        <div class="fw-bold">${platform}</div>
+                        <div class="small text-truncate" style="max-width: 400px;">
+                            <a href="${url}" target="_blank" class="text-info">${url}</a>
+                        </div>
+                    </div>
+                </div>
                 <div>
-                    <div class="fw-bold">${platform}</div>
-                    <div class="small text-truncate" style="max-width: 400px;">${url}</div>
+                    <a href="${url}" target="_blank" class="btn btn-sm btn-outline-info me-1" title="Open Profile">
+                        <i class="fa fa-external-link"></i>
+                    </a>
+                    <button class="btn btn-sm btn-outline-secondary copy-btn" data-url="${url}" title="Copy URL">
+                        <i class="fa fa-clipboard"></i>
+                    </button>
                 </div>
             </div>
+            ${metadataHtml}
         `;
         
-        // Add badge
-        const badge = document.createElement('span');
-        badge.className = 'badge bg-info rounded-pill';
-        badge.innerHTML = '<i class="fa fa-external-link"></i>';
-        
-        item.appendChild(content);
-        item.appendChild(badge);
+        // Handle copy button click
+        const copyBtn = item.querySelector('.copy-btn');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const url = this.getAttribute('data-url');
+                navigator.clipboard.writeText(url)
+                    .then(() => {
+                        // Change button to show copied state
+                        this.innerHTML = '<i class="fa fa-check"></i>';
+                        this.classList.remove('btn-outline-secondary');
+                        this.classList.add('btn-success');
+                        
+                        // Reset after 2 seconds
+                        setTimeout(() => {
+                            this.innerHTML = '<i class="fa fa-clipboard"></i>';
+                            this.classList.remove('btn-success');
+                            this.classList.add('btn-outline-secondary');
+                        }, 2000);
+                    })
+                    .catch(err => {
+                        console.error('Could not copy text: ', err);
+                        // Alert as fallback
+                        alert('Profile URL: ' + url);
+                    });
+            });
+        }
         
         return item;
     }
