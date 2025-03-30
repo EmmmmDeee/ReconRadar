@@ -526,76 +526,122 @@ document.addEventListener('DOMContentLoaded', function() {
                     
                     const metadata = currentSearchResults.platform_metadata.detailed_metadata[platform];
                     if (metadata) {
+                        // Sanitize metadata fields to prevent errors
+                        const safeMetadata = {
+                            avatar_url: typeof metadata.avatar_url === 'string' ? metadata.avatar_url : '',
+                            verified: !!metadata.verified,
+                            name: typeof metadata.name === 'string' ? metadata.name : '',
+                            username: typeof metadata.username === 'string' ? metadata.username : '',
+                            bio: typeof metadata.bio === 'string' ? metadata.bio : '',
+                            followers_count: metadata.followers_count || '',
+                            following_count: metadata.following_count || '',
+                            posts_count: metadata.posts_count || '',
+                            location: typeof metadata.location === 'string' ? metadata.location : '',
+                            website: typeof metadata.website === 'string' ? metadata.website : '',
+                            join_date: typeof metadata.join_date === 'string' ? metadata.join_date : '',
+                            content_sample: typeof metadata.content_sample === 'string' ? metadata.content_sample : 
+                                           (Array.isArray(metadata.content_sample) ? metadata.content_sample.join(', ') : '')
+                        };
+                        
                         // Build metadata section with collapsible details
                         const metadataId = `metadata-${platform.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-                        metadataHtml = `
-                            <div class="mt-3 border-top pt-3">
-                                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" 
-                                        data-bs-target="#${metadataId}" aria-expanded="false">
-                                    <i class="fa fa-info-circle me-1"></i> Show Profile Details
-                                </button>
-                                <div class="collapse mt-2" id="${metadataId}">
-                                    <div class="card card-body bg-dark">
-                                        <div class="row">
-                                            ${metadata.avatar_url ? 
-                                            `<div class="col-md-3 mb-3">
-                                                <img src="${metadata.avatar_url}" class="img-fluid rounded" alt="Profile picture">
-                                                ${metadata.verified ? '<span class="badge bg-info mt-2 d-block"><i class="fa fa-check-circle"></i> Verified</span>' : ''}
-                                            </div>` : ''}
-                                            
-                                            <div class="${metadata.avatar_url ? 'col-md-9' : 'col-12'}">
-                                                ${metadata.name ? `<h5>${metadata.name}</h5>` : ''}
-                                                ${metadata.username ? `<p class="mb-1"><strong>Username:</strong> ${metadata.username}</p>` : ''}
-                                                ${metadata.bio ? `<p class="mb-2">${metadata.bio}</p>` : ''}
+                        
+                        // Helper functions to safely check and format content
+                        const hasContent = (field) => field && field.length > 0;
+                        const escapeHtml = (str) => {
+                            if (typeof str !== 'string') return '';
+                            return str
+                                .replace(/&/g, '&amp;')
+                                .replace(/</g, '&lt;')
+                                .replace(/>/g, '&gt;')
+                                .replace(/"/g, '&quot;')
+                                .replace(/'/g, '&#039;');
+                        };
+                        
+                        // Check if we have any meaningful metadata to display
+                        if (hasContent(safeMetadata.avatar_url) || 
+                            hasContent(safeMetadata.name) || 
+                            hasContent(safeMetadata.bio) ||
+                            hasContent(safeMetadata.content_sample)) {
+                            
+                            metadataHtml = `
+                                <div class="mt-3 border-top pt-3">
+                                    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" 
+                                            data-bs-target="#${metadataId}" aria-expanded="false">
+                                        <i class="fa fa-info-circle me-1"></i> Show Profile Details
+                                    </button>
+                                    <div class="collapse mt-2" id="${metadataId}">
+                                        <div class="card card-body bg-dark">
+                                            <div class="row">
+                                                ${hasContent(safeMetadata.avatar_url) ? 
+                                                `<div class="col-md-3 mb-3">
+                                                    <img src="${escapeHtml(safeMetadata.avatar_url)}" class="img-fluid rounded" alt="Profile picture">
+                                                    ${safeMetadata.verified ? '<span class="badge bg-info mt-2 d-block"><i class="fa fa-check-circle"></i> Verified</span>' : ''}
+                                                </div>` : ''}
                                                 
-                                                <div class="row g-2 mb-2">
-                                                    ${metadata.followers_count ? 
-                                                    `<div class="col-auto">
-                                                        <span class="badge bg-secondary">
-                                                            <i class="fa fa-users me-1"></i> ${metadata.followers_count} followers
-                                                        </span>
-                                                    </div>` : ''}
+                                                <div class="${hasContent(safeMetadata.avatar_url) ? 'col-md-9' : 'col-12'}">
+                                                    ${hasContent(safeMetadata.name) ? `<h5>${escapeHtml(safeMetadata.name)}</h5>` : ''}
+                                                    ${hasContent(safeMetadata.username) ? `<p class="mb-1"><strong>Username:</strong> ${escapeHtml(safeMetadata.username)}</p>` : ''}
+                                                    ${hasContent(safeMetadata.bio) ? `<p class="mb-2">${escapeHtml(safeMetadata.bio)}</p>` : ''}
                                                     
-                                                    ${metadata.following_count ? 
-                                                    `<div class="col-auto">
-                                                        <span class="badge bg-secondary">
-                                                            <i class="fa fa-user-plus me-1"></i> ${metadata.following_count} following
-                                                        </span>
-                                                    </div>` : ''}
+                                                    <div class="row g-2 mb-2">
+                                                        ${hasContent(safeMetadata.followers_count) ? 
+                                                        `<div class="col-auto">
+                                                            <span class="badge bg-secondary">
+                                                                <i class="fa fa-users me-1"></i> ${escapeHtml(safeMetadata.followers_count.toString())} followers
+                                                            </span>
+                                                        </div>` : ''}
+                                                        
+                                                        ${hasContent(safeMetadata.following_count) ? 
+                                                        `<div class="col-auto">
+                                                            <span class="badge bg-secondary">
+                                                                <i class="fa fa-user-plus me-1"></i> ${escapeHtml(safeMetadata.following_count.toString())} following
+                                                            </span>
+                                                        </div>` : ''}
+                                                        
+                                                        ${hasContent(safeMetadata.posts_count) ? 
+                                                        `<div class="col-auto">
+                                                            <span class="badge bg-secondary">
+                                                                <i class="fa fa-file-text me-1"></i> ${escapeHtml(safeMetadata.posts_count.toString())} posts
+                                                            </span>
+                                                        </div>` : ''}
+                                                    </div>
                                                     
-                                                    ${metadata.posts_count ? 
-                                                    `<div class="col-auto">
-                                                        <span class="badge bg-secondary">
-                                                            <i class="fa fa-file-text me-1"></i> ${metadata.posts_count} posts
-                                                        </span>
+                                                    ${hasContent(safeMetadata.location) ? 
+                                                    `<p class="mb-1"><i class="fa fa-map-marker me-1"></i> ${escapeHtml(safeMetadata.location)}</p>` : ''}
+                                                    
+                                                    ${hasContent(safeMetadata.website) ? 
+                                                    `<p class="mb-1">
+                                                        <i class="fa fa-link me-1"></i> 
+                                                        <a href="${escapeHtml(safeMetadata.website)}" target="_blank">${escapeHtml(safeMetadata.website)}</a>
+                                                    </p>` : ''}
+                                                    
+                                                    ${hasContent(safeMetadata.join_date) ? 
+                                                    `<p class="mb-1"><i class="fa fa-calendar me-1"></i> Joined: ${escapeHtml(safeMetadata.join_date)}</p>` : ''}
+                                                    
+                                                    ${hasContent(safeMetadata.content_sample) ? 
+                                                    `<div class="mt-3">
+                                                        <small class="text-muted">Profile content sample:</small>
+                                                        <div class="card p-2 bg-secondary mt-1">
+                                                            <small>${escapeHtml(safeMetadata.content_sample.substring(0, 200))}${safeMetadata.content_sample.length > 200 ? '...' : ''}</small>
+                                                        </div>
                                                     </div>` : ''}
                                                 </div>
-                                                
-                                                ${metadata.location ? 
-                                                `<p class="mb-1"><i class="fa fa-map-marker me-1"></i> ${metadata.location}</p>` : ''}
-                                                
-                                                ${metadata.website ? 
-                                                `<p class="mb-1">
-                                                    <i class="fa fa-link me-1"></i> 
-                                                    <a href="${metadata.website}" target="_blank">${metadata.website}</a>
-                                                </p>` : ''}
-                                                
-                                                ${metadata.join_date ? 
-                                                `<p class="mb-1"><i class="fa fa-calendar me-1"></i> Joined: ${metadata.join_date}</p>` : ''}
-                                                
-                                                ${metadata.content_sample ? 
-                                                `<div class="mt-3">
-                                                    <small class="text-muted">Profile content sample:</small>
-                                                    <div class="card p-2 bg-secondary mt-1">
-                                                        <small>${metadata.content_sample.substring(0, 200)}${metadata.content_sample.length > 200 ? '...' : ''}</small>
-                                                    </div>
-                                                </div>` : ''}
                                             </div>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-                        `;
+                            `;
+                        } else {
+                            // Basic metadata view if we have a profile but no rich data
+                            metadataHtml = `
+                                <div class="mt-2">
+                                    <span class="badge bg-info">
+                                        <i class="fa fa-check-circle me-1"></i> Profile found on ${platform}
+                                    </span>
+                                </div>
+                            `;
+                        }
                     }
                 }
             } catch (metadataError) {
