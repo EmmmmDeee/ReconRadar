@@ -142,114 +142,26 @@ document.addEventListener('DOMContentLoaded', function() {
         const profilesFoundContainer = document.getElementById('profiles-found-container');
         const profileCount = document.getElementById('profile-count');
         
+        // Always show profile count
+        profilesFoundContainer.classList.remove('d-none');
+        profileCount.textContent = Object.keys(data.results).length;
+            
+        // Always show found profiles in a simpler format to ensure reliability
+        profilesList.innerHTML = ''; // Clear any previous results
+            
         if (Object.keys(data.results).length > 0) {
-            profilesFoundContainer.classList.remove('d-none');
-            profileCount.textContent = Object.keys(data.results).length;
-            
-            // Check if we have platform metadata with categories
-            if (data.platform_metadata && data.platform_metadata.categories && 
-                Object.keys(data.platform_metadata.categories).length > 0) {
+            // Sort platforms alphabetically for consistent display
+            const sortedPlatforms = Object.entries(data.results).sort((a, b) => a[0].localeCompare(b[0]));
                 
-                try {
-                    // Group platforms by category - ensuring categories and platforms are valid
-                    const categories = data.platform_metadata.categories || {};
-                    console.log("Platform categories:", categories); // Debug log to see categories
-                    
-                    // Create a header for each category and list platforms underneath
-                    for (const [category, platforms] of Object.entries(categories)) {
-                        // Validate the platforms data
-                        if (!platforms || !Array.isArray(platforms) || platforms.length === 0) {
-                            console.log("Skipping invalid category:", category, platforms);
-                            continue;
-                        }
-                        
-                        // Keep track of whether any profiles were added in this category
-                        let profilesAddedInCategory = false;
-                        const categoryItems = [];
-                        
-                        // Sort platforms alphabetically within category
-                        const sortedPlatforms = [...platforms].sort();
-                        
-                        // Add platforms to this category
-                        for (const platform of sortedPlatforms) {
-                            if (data.results && data.results[platform]) {
-                                const item = createProfileListItem(platform, data.results[platform]);
-                                
-                                // Add response time if available
-                                try {
-                                    if (data.platform_metadata.response_times && 
-                                        data.platform_metadata.response_times[platform]) {
-                                        const responseTime = data.platform_metadata.response_times[platform];
-                                        
-                                        // Add a small indicator for fast responses
-                                        if (responseTime < 1) {
-                                            const speedBadge = document.createElement('span');
-                                            speedBadge.className = 'badge bg-success ms-2';
-                                            speedBadge.innerHTML = '<i class="fa fa-bolt"></i> Fast';
-                                            
-                                            const titleElement = item.querySelector('.fw-bold');
-                                            if (titleElement) {
-                                                titleElement.appendChild(speedBadge);
-                                            }
-                                        }
-                                    }
-                                } catch (e) {
-                                    console.error("Error adding response time badge:", e);
-                                }
-                                
-                                categoryItems.push(item);
-                                profilesAddedInCategory = true;
-                            }
-                        }
-                        
-                        // Only add category header if profiles were found in this category
-                        if (profilesAddedInCategory) {
-                            // Create a category header
-                            const categoryHeader = document.createElement('div');
-                            categoryHeader.className = 'mb-3';
-                            categoryHeader.innerHTML = `
-                                <h5 class="border-bottom pb-2 text-info">
-                                    <i class="fa fa-folder-open me-2"></i>${category}
-                                </h5>
-                            `;
-                            profilesList.appendChild(categoryHeader);
-                            
-                            // Add all items for this category
-                            for (const item of categoryItems) {
-                                profilesList.appendChild(item);
-                            }
-                        }
-                    }
-                    
-                    // If no profiles were added, fall back to non-categorized display
-                    if (profilesList.children.length === 0 && Object.keys(data.results).length > 0) {
-                        throw new Error("No profiles were categorized");
-                    }
-                    
-                } catch (e) {
-                    console.error("Error displaying categorized results:", e);
-                    console.log("Results data structure:", data.results);
-                    // Fallback to non-categorized display
-                    profilesList.innerHTML = ''; // Clear any partial results
-                    const sortedPlatforms = Object.entries(data.results).sort((a, b) => a[0].localeCompare(b[0]));
-                    for (const [platform, url] of sortedPlatforms) {
-                        const item = createProfileListItem(platform, url);
-                        profilesList.appendChild(item);
-                    }
-                }
-            } else {
-                // Sort platforms alphabetically (fallback if no categories)
-                const sortedPlatforms = Object.entries(data.results).sort((a, b) => a[0].localeCompare(b[0]));
-                
-                for (const [platform, url] of sortedPlatforms) {
-                    const item = createProfileListItem(platform, url);
-                    profilesList.appendChild(item);
-                }
+            // Create a simple list of profiles
+            for (const [platform, url] of sortedPlatforms) {
+                const item = createProfileListItem(platform, url);
+                profilesList.appendChild(item);
             }
+                
+            // Log success message
+            console.log("Successfully displayed", Object.keys(data.results).length, "profiles");
         } else {
-            profilesFoundContainer.classList.remove('d-none');
-            profileCount.textContent = '0';
-            
             // Show a message when no profiles are found
             const noResults = document.createElement('div');
             noResults.className = 'alert alert-warning';
