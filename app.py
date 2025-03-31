@@ -19,7 +19,8 @@ from web_scraper import (
     get_website_text_content, 
     extract_metadata_from_url, 
     extract_geolocation_data, 
-    extract_contact_information
+    extract_contact_information,
+    extract_dark_web_information
 )
 from assets import process_attached_file, extract_social_profiles_from_text, extract_usernames_from_text, extract_image_urls_from_text
 
@@ -125,6 +126,7 @@ def extract_web_content():
         # Additional analysis if we have the HTML content
         geolocation_data = {}
         contact_data = {}
+        dark_web_data = {}
         
         if html_content:
             try:
@@ -133,6 +135,9 @@ def extract_web_content():
                 
                 # Extract contact information
                 contact_data = extract_contact_information(html_content)
+                
+                # Extract dark web information
+                dark_web_data = extract_dark_web_information(html_content, extracted_text)
             except Exception as analysis_error:
                 logging.warning(f"Error during advanced content analysis: {str(analysis_error)}")
         
@@ -153,6 +158,7 @@ def extract_web_content():
             'metadata': url_metadata,
             'geolocation': geolocation_data,
             'contact_information': contact_data,
+            'dark_web_information': dark_web_data,
             'timestamp': datetime.now(),
             'status': 'success'
         }
@@ -272,6 +278,140 @@ def analyze_file():
             'status': 'error'
         }), 500
 
+@app.route('/analyze/darkweb', methods=['POST'])
+def analyze_darkweb():
+    """
+    Analyze text or URL content specifically for dark web indicators
+    
+    Expected JSON request body:
+    {
+        "text": "text content to analyze (optional)",
+        "url": "website URL to analyze (optional)",
+        "threshold": 0.7  # Optional confidence threshold (0.0-1.0)
+    }
+    
+    At least one of 'text' or 'url' must be provided.
+    """
+    data = request.get_json()
+    text_content = data.get('text', '').strip()
+    url = data.get('url', '').strip()
+    threshold = float(data.get('threshold', 0.7))
+    
+    if not text_content and not url:
+        return jsonify({
+            'error': 'Either text content or URL is required',
+            'status': 'error'
+        }), 400
+    
+    try:
+        results = {'indicators': [], 'analysis': {}}
+        
+        # If a URL is provided, fetch its content
+        html_content = None
+        if url:
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                response = requests.get(url, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    html_content = response.text
+                    # If no text was explicitly provided, extract it from the HTML
+                    if not text_content:
+                        text_content = get_website_text_content(url)
+            except Exception as url_error:
+                logging.warning(f"Error fetching URL content: {str(url_error)}")
+                results['url_error'] = str(url_error)
+        
+        # Analyze for dark web indicators
+        if html_content:
+            dark_web_data = extract_dark_web_information(html_content, text_content)
+            results['analysis'] = dark_web_data
+            
+            # Apply confidence threshold
+            if dark_web_data.get('confidence', 0) >= threshold:
+                # Extract high-confidence indicators
+                if 'onion_services' in dark_web_data and dark_web_data['onion_services']:
+                    results['indicators'].append({
+                        'type': 'onion_services',
+                        'description': 'Tor hidden services detected',
+                        'confidence': 0.95,
+                        'count': len(dark_web_data['onion_services'])
+                    })
+                
+                if 'cryptocurrency_addresses' in dark_web_data:
+                    for crypto_type, addresses in dark_web_data['cryptocurrency_addresses'].items():
+                        if addresses:
+                            results['indicators'].append({
+                                'type': f'{crypto_type}_addresses',
+                                'description': f'{crypto_type.capitalize()} cryptocurrency addresses found',
+                                'confidence': 0.85,
+                                'count': len(addresses)
+                            })
+                
+                if 'secure_messaging' in dark_web_data:
+                    for msg_type, identifiers in dark_web_data['secure_messaging'].items():
+                        if identifiers:
+                            results['indicators'].append({
+                                'type': f'{msg_type}_messaging',
+                                'description': f'Secure messaging ({msg_type}) identifiers detected',
+                                'confidence': 0.8,
+                                'count': len(identifiers)
+                            })
+                
+                if 'security_indicators' in dark_web_data and dark_web_data['security_indicators']:
+                    results['indicators'].append({
+                        'type': 'security_terminology',
+                        'description': 'Advanced security terminology detected',
+                        'confidence': 0.7,
+                        'terms': dark_web_data['security_indicators'][:5]  # Limit to top 5 terms
+                    })
+        
+        # If we have text content but no HTML, do a simplified analysis
+        elif text_content:
+            # Create a mock HTML string just to reuse the extraction function
+            mock_html = f"<html><body>{html.escape(text_content)}</body></html>"
+            dark_web_data = extract_dark_web_information(mock_html, text_content)
+            results['analysis'] = dark_web_data
+            
+            # Apply the same threshold logic as above
+            if dark_web_data.get('confidence', 0) >= threshold:
+                # Add the same indicator processing as above
+                if 'onion_services' in dark_web_data and dark_web_data['onion_services']:
+                    results['indicators'].append({
+                        'type': 'onion_services',
+                        'description': 'Tor hidden services detected',
+                        'confidence': 0.95,
+                        'count': len(dark_web_data['onion_services'])
+                    })
+                
+                # Same for cryptocurrency, secure messaging and security indicators
+                # (Simplified - in real code we'd avoid this duplication)
+                if 'cryptocurrency_addresses' in dark_web_data:
+                    for crypto_type, addresses in dark_web_data['cryptocurrency_addresses'].items():
+                        if addresses:
+                            results['indicators'].append({
+                                'type': f'{crypto_type}_addresses',
+                                'description': f'{crypto_type.capitalize()} cryptocurrency addresses found',
+                                'confidence': 0.85,
+                                'count': len(addresses)
+                            })
+        
+        return jsonify({
+            'results': results,
+            'source': url if url else 'text_input',
+            'threshold': threshold,
+            'timestamp': datetime.now(),
+            'status': 'success'
+        })
+    except Exception as e:
+        logging.error(f"Error analyzing dark web indicators: {str(e)}")
+        logging.error(traceback.format_exc())
+        return jsonify({
+            'error': f"Failed to analyze dark web indicators: {str(e)}",
+            'status': 'error'
+        }), 500
+
 @app.route('/analyze/file/<filename>', methods=['GET'])
 def analyze_existing_file(filename):
     """
@@ -334,6 +474,7 @@ def api_info():
             '/search': 'POST endpoint for searching profiles and generating reverse image search links',
             '/extract': 'POST endpoint for extracting readable content, geolocation and contact information from websites',
             '/analyze/text': 'POST endpoint for analyzing text content to find social profiles, usernames, and image URLs',
+            '/analyze/darkweb': 'POST endpoint for analyzing content specifically for dark web indicators',
             '/analyze/file': 'POST endpoint for analyzing file content to find profiles and other indicators',
             '/analyze/file/<filename>': 'GET endpoint for analyzing an existing file in the attached_assets directory',
             '/api/info': 'GET information about the API capabilities and endpoints'

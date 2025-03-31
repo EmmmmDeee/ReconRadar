@@ -1,10 +1,10 @@
 import logging
 import trafilatura
-import requests
+from bs4 import BeautifulSoup
 import re
 import json
-from urllib.parse import urlparse, parse_qs
-from bs4 import BeautifulSoup
+import requests
+from urllib.parse import urlparse, parse_qs, unquote
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -93,7 +93,6 @@ def extract_metadata_from_url(url: str) -> dict:
     
     try:
         # Parse the URL
-        from urllib.parse import urlparse, parse_qs
         parsed_url = urlparse(url)
         
         # Extract domain
@@ -289,7 +288,6 @@ def extract_geolocation_data(html_content: str, url: str = None) -> dict:
                 elif 'q=' in src:
                     place_part = src.split('q=')[1].split('&')[0]
                     if place_part and place_part != 'q=':
-                        from urllib.parse import unquote
                         place = unquote(place_part)
                         geolocation_data["place_name"] = place
                         geolocation_data["location_mentions"].append(place)
@@ -385,6 +383,172 @@ def extract_geolocation_data(html_content: str, url: str = None) -> dict:
     except Exception as e:
         logging.error(f"Error extracting geolocation data: {e}")
         return geolocation_data
+
+def extract_dark_web_information(html_content: str, text_content: str = None) -> dict:
+    """
+    Extract dark web and cybersecurity-related information from HTML content.
+    Detects onion services, cryptocurrency addresses, secure messaging IDs, and more.
+    
+    Args:
+        html_content (str): HTML content to analyze
+        text_content (str, optional): Preprocessed text content if available
+        
+    Returns:
+        dict: Dictionary containing extracted dark web information
+    """
+    dark_web_info = {
+        "onion_services": [],
+        "cryptocurrency_addresses": {
+            "bitcoin": [],
+            "ethereum": [],
+            "monero": [],
+            "zcash": []
+        },
+        "secure_messaging": {
+            "pgp_keys": [],
+            "keybase": [],
+            "session": [],
+            "signal": [],
+            "protonmail": []
+        },
+        "security_indicators": [],
+        "confidence": 0.0,
+        "source": None
+    }
+    
+    try:
+        # If text content isn't provided, extract it from the HTML
+        if not text_content:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            # Remove script and style elements
+            for script in soup(["script", "style"]):
+                script.decompose()
+            text_content = soup.get_text(separator=" ", strip=True)
+        
+        # 1. Find onion services
+        onion_patterns = [
+            r'https?://([a-z2-7]{16,56}\.onion)(?:/\S*)?',  # .onion URLs
+            r'([a-z2-7]{16,56}\.onion)(?:/\S*)?',  # .onion domains without http
+            r'(?:tor hidden service|onion service|hidden service)(?:\s*(?:at|:)\s*)(?:https?://)?([a-z2-7]{16,56}\.onion)(?:/\S*)?'  # Descriptive context
+        ]
+        
+        for pattern in onion_patterns:
+            matches = re.finditer(pattern, text_content, re.IGNORECASE)
+            for match in matches:
+                onion_service = match.group(1)
+                if onion_service not in dark_web_info["onion_services"]:
+                    dark_web_info["onion_services"].append(onion_service)
+                    dark_web_info["confidence"] = max(dark_web_info["confidence"], 0.9)
+                    dark_web_info["source"] = "text_analysis"
+        
+        # 2. Find cryptocurrency addresses
+        crypto_patterns = {
+            "bitcoin": [
+                r'\b(bc1[a-zA-HJ-NP-Z0-9]{25,39})\b',  # Bech32 format
+                r'\b([13][a-km-zA-HJ-NP-Z1-9]{25,34})\b'  # Legacy format
+            ],
+            "ethereum": [
+                r'\b(0x[a-fA-F0-9]{40})\b'  # Ethereum address format
+            ],
+            "monero": [
+                r'\b([48][a-zA-Z0-9]{94,95})\b'  # Monero address format
+            ],
+            "zcash": [
+                r'\b(z[a-zA-Z0-9]{77,78})\b',  # Shielded Zcash format
+                r'\b(t[a-zA-Z0-9]{34,35})\b'  # Transparent Zcash format
+            ]
+        }
+        
+        for crypto_type, patterns in crypto_patterns.items():
+            for pattern in patterns:
+                matches = re.finditer(pattern, text_content)
+                for match in matches:
+                    address = match.group(1)
+                    if address not in dark_web_info["cryptocurrency_addresses"][crypto_type]:
+                        dark_web_info["cryptocurrency_addresses"][crypto_type].append(address)
+                        dark_web_info["confidence"] = max(dark_web_info["confidence"], 0.85)
+                        dark_web_info["source"] = "text_analysis"
+        
+        # 3. Find secure messaging identifiers
+        secure_msg_patterns = {
+            "pgp_keys": [
+                r'(?:PGP|GPG)(?:\s+key)?(?:\s*ID|\s*fingerprint)?(?:\s*[:=])?\s*([A-F0-9]{8,40})',
+                r'-----BEGIN PGP PUBLIC KEY BLOCK-----'
+            ],
+            "keybase": [
+                r'(?:keybase|kb)(?:\.io)?(?:\s*[:=])?\s*([a-zA-Z0-9_]{2,25})',
+                r'https?://keybase\.io/([a-zA-Z0-9_]{2,25})'
+            ],
+            "session": [
+                r'(?:session|session id)(?:\s*[:=])?\s*([a-f0-9]{64,66})',
+                r'05[a-f0-9]{61,63}'  # Session ID format
+            ],
+            "signal": [
+                r'(?:signal|signal number|\+)(?:\s*[:=])?\s*(\+\d{10,15})'
+            ],
+            "protonmail": [
+                r'(?:protonmail|proton mail|proton email)(?:\s*[:=])?\s*([a-zA-Z0-9._%+-]+@protonmail\.(?:com|ch))',
+                r'\b([a-zA-Z0-9._%+-]+@protonmail\.(?:com|ch))\b'
+            ]
+        }
+        
+        for msg_type, patterns in secure_msg_patterns.items():
+            for pattern in patterns:
+                matches = re.finditer(pattern, text_content, re.IGNORECASE)
+                for match in matches:
+                    if len(match.groups()) >= 1:
+                        identifier = match.group(1)
+                        if identifier not in dark_web_info["secure_messaging"][msg_type]:
+                            dark_web_info["secure_messaging"][msg_type].append(identifier)
+                            dark_web_info["confidence"] = max(dark_web_info["confidence"], 0.8)
+                            dark_web_info["source"] = "text_analysis"
+                    elif msg_type == "pgp_keys" and "BEGIN PGP PUBLIC KEY BLOCK" in match.group(0):
+                        # Special case for inline PGP blocks
+                        dark_web_info["secure_messaging"]["pgp_keys"].append("PGP_BLOCK_FOUND")
+                        dark_web_info["confidence"] = max(dark_web_info["confidence"], 0.95)
+                        dark_web_info["source"] = "text_analysis"
+        
+        # 4. Find security indicators and specialized terms
+        security_indicators = [
+            r'(?:strong encryption|end-to-end encryption|e2ee)',
+            r'(?:self-destruct messages|burn after reading)',
+            r'(?:threat model|opsec|operational security)',
+            r'(?:secure drop|anonymous upload|anonymous file sharing)',
+            r'(?:tails os|whonix|qubes os|hardened os)',
+            r'(?:mixnet|mix network|garlic routing|onion routing)',
+            r'(?:zero knowledge|zero-knowledge|zk)',
+            r'(?:secure chat|secure messaging|encrypted chat)',
+            r'(?:anonymous remailer|i2p|freenet|zeronet)',
+            r'(?:warrant canary|transparency report)',
+            r'(?:dark web|dark net|darknet|hidden services)'
+        ]
+        
+        for pattern in security_indicators:
+            matches = re.finditer(pattern, text_content, re.IGNORECASE)
+            for match in matches:
+                indicator = match.group(0).lower()
+                if indicator not in dark_web_info["security_indicators"]:
+                    dark_web_info["security_indicators"].append(indicator)
+                    dark_web_info["confidence"] = max(dark_web_info["confidence"], 0.7)
+                    dark_web_info["source"] = "text_analysis"
+        
+        # Clean up empty lists for cleaner output
+        for crypto_type in list(dark_web_info["cryptocurrency_addresses"].keys()):
+            if not dark_web_info["cryptocurrency_addresses"][crypto_type]:
+                dark_web_info["cryptocurrency_addresses"].pop(crypto_type)
+                
+        for msg_type in list(dark_web_info["secure_messaging"].keys()):
+            if not dark_web_info["secure_messaging"][msg_type]:
+                dark_web_info["secure_messaging"].pop(msg_type)
+                
+        if not dark_web_info["security_indicators"]:
+            dark_web_info.pop("security_indicators")
+            
+        return dark_web_info
+            
+    except Exception as e:
+        logging.error(f"Error extracting dark web information: {e}")
+        return dark_web_info
 
 def extract_contact_information(html_content: str) -> dict:
     """

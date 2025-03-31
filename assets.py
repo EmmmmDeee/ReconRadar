@@ -8,6 +8,7 @@ import json
 import logging
 from datetime import datetime
 from urllib.parse import urlparse
+from web_scraper import extract_dark_web_information
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -240,34 +241,55 @@ def extract_usernames_from_text(text_content):
     # Advanced pattern recognition for username formats with expanded capabilities
     username_patterns = [
         # Explicit username markers with high confidence
-        (r'(?:(?:user(?:name)?|account|handle|alias)(?:\s+(?:is|:))?\s+[\'"]?(@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\'"]?)', 1.0),
+        (r'(?:(?:user(?:name)?|account|handle|alias|id)(?:\s+(?:is|:))?\s+[\'"]?(@?)([A-Za-z0-9][A-Za-z0-9_\.\-]{2,30})[\'"]?)', 1.0),
         
-        # Social media style @ mentions with expanded character set
-        (r'@([A-Za-z0-9][A-Za-z0-9_\.-]{2,24})\b', 0.9),
+        # Social media style @ mentions with expanded character set - improved to catch more formats
+        (r'@([A-Za-z0-9][A-Za-z0-9_\.\-]{2,30})\b', 0.95),
+        
+        # Discord username format (name#numbers) - high confidence pattern
+        (r'\b([A-Za-z0-9][A-Za-z0-9_\.\-]{2,30})#\d{4}\b', 0.95),
+        
+        # HUMINT specific patterns - names with specific roles or professions
+        (r'(?:researcher|investigator|analyst|specialist|officer|agent|operative|detective|journalist)\s+([A-Za-z][A-Za-z0-9_\.\-]{2,30}(?:\s+[A-Za-z][A-Za-z0-9]{1,30})?)', 0.85),
         
         # Username with common indicators including aliases
-        (r'(?:follow|add|contact|find|message|dm|ping|reach)\s+(?:me|us|him|her|them)?\s+(?:at|on|via|using|through)?\s+[\'"]?(@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\'"]?', 0.85),
+        (r'(?:follow|add|contact|find|message|dm|ping|reach|join|connect)\s+(?:me|us|him|her|them)?\s+(?:at|on|via|using|through)?\s+[\'"]?(@?)([A-Za-z0-9][A-Za-z0-9_\.\-]{2,30})[\'"]?', 0.9),
+        
+        # "Known as" or "goes by" pattern - strong HUMINT indicator
+        (r'(?:known as|goes by|aka|alias|called|nicknamed)\s+[\'"]?(@?)([A-Za-z0-9][A-Za-z0-9_\.\-]{2,30})[\'"]?', 0.9),
         
         # Generic username patterns with context clues (lower confidence)
-        (r'\b(?:my|the|their|his|her|our)\s+(?:id|handle|user|account|alias|nick|profile|tag)\s+(?:is|:)?\s+[\'"]?([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\'"]?', 0.75),
+        (r'\b(?:my|the|their|his|her|our)\s+(?:id|handle|user|account|alias|nick|profile|tag|code)\s+(?:is|:)?\s+[\'"]?([A-Za-z0-9][A-Za-z0-9_\.\-]{2,30})[\'"]?', 0.85),
         
         # Platform-specific identifier with username (expanded platforms)
-        (r'(?:twitter|x|instagram|github|reddit|snapchat|tiktok|linkedin|discord|telegram|youtube|pinterest|behance|dribbble|mastodon|twitch|gitlab)(?:.com|.org|.io|.gg|.me)?(?:/|\s+)(@?)([A-Za-z0-9][A-Za-z0-9_\.-]{2,24})\b', 0.85),
+        (r'(?:twitter|x|instagram|github|reddit|snapchat|tiktok|linkedin|discord|telegram|youtube|pinterest|behance|dribbble|mastodon|twitch|gitlab|keybase|signal|session|wire|element)(?:.com|.org|.io|.gg|.me)?(?:/|\s+)(@?)([A-Za-z0-9][A-Za-z0-9_\.\-]{2,30})\b', 0.9),
         
         # Email pattern usernames (extract username part from email)
-        (r'\b([a-zA-Z0-9][a-zA-Z0-9._-]{2,24})@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b', 0.8),
+        (r'\b([a-zA-Z0-9][a-zA-Z0-9._\-]{2,30})@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b', 0.85),
         
         # Usernames in various enclosures (parentheses, brackets, etc.)
-        (r'[\(\[\{](@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\)\]\}]', 0.65),
+        (r'[\(\[\{](@?)([A-Za-z0-9][A-Za-z0-9_\.\-]{2,30})[\)\]\}]', 0.7),
+        
+        # Handle/username declaration patterns
+        (r'\bhandle(?:\s+(?:is|:))?\s+[\'"]?(@?)([A-Za-z0-9][A-Za-z0-9_\.\-]{2,30})[\'"]?', 0.95),
+        (r'\b(?:i am|i\'m)\s+[\'"]?(@?)([A-Za-z0-9][A-Za-z0-9_\.\-]{2,30})[\'"]?\s+(?:on|at)\s+(?:twitter|github|reddit|discord)', 0.9),
         
         # Common username formats with special patterns
-        (r'\b([A-Za-z][A-Za-z0-9]{1,10}[_.-][A-Za-z0-9]{1,10})\b', 0.55), # pattern like john_doe, john.doe
+        (r'\b([A-Za-z][A-Za-z0-9]{1,20}[_.\-][A-Za-z0-9]{1,20})\b', 0.6), # pattern like john_doe, john.doe
         
-        # Dark web handles with specific formats (onion addresses)
-        (r'(?:on|at|via)\s+(?:tor|onion|dark\s*web|hidden\s*service):\s*([A-Za-z0-9_-]{2,24})', 0.9),
+        # Dark web handles with specific formats
+        (r'(?:on|at|via|using|through)\s+(?:tor|onion|dark\s*web|hidden\s*service)(?:[\s\:\.])+([A-Za-z0-9_\-]{2,30})', 0.9),
+        (r'(?:tor|onion|dark\s*web|hidden\s*service)\s+(?:username|handle|id|alias)(?:[\s\:\.])+([A-Za-z0-9_\-]{2,30})', 0.95),
         
-        # Generic usernames (lowest confidence, needs more validation)
-        (r'\b([A-Za-z][A-Za-z0-9_\.]{2,24})\b', 0.3)
+        # Cryptocurrency and digital identity patterns
+        (r'(?:key(?:base)?|pgp|gpg|public\s*key)\s+(?:id|fingerprint)?\s*[:\s]+([A-F0-9]{8,40})', 0.85),
+        (r'(?:session|signal|matrix|element|xmpp)\s+id(?:[\s\:\.])+([A-Za-z0-9_\-\.]{4,64})', 0.9),
+        
+        # Hacker/security researcher handles
+        (r'\b(?:hacker|security|researcher|pentester|red\s*team)\s+(?:known as|called|alias)\s+[\'"]?([A-Za-z0-9][A-Za-z0-9_\.\-]{2,30})[\'"]?', 0.9),
+        
+        # Generic usernames (lowest confidence, needs more validation) - now slightly higher quality filter
+        (r'\b([A-Za-z][A-Za-z0-9_\.\-]{3,30})\b', 0.4)
     ]
     
     # Comprehensive exclusion lists with categories
@@ -384,7 +406,7 @@ def extract_usernames_from_text(text_content):
     # Create a scoring function that uses multiple signals to rate username likelihood
     def score_username(username, context_before="", context_after=""):
         """
-        Score a potential username based on multiple heuristics.
+        Score a potential username based on multiple heuristics with improved HUMINT and OSINT detection.
         
         Args:
             username: The potential username to score
@@ -398,7 +420,7 @@ def extract_usernames_from_text(text_content):
         score = 0.5
         
         # Basic disqualifiers (absolute)
-        if len(username) < 3 or len(username) > 25:
+        if len(username) < 3 or len(username) > 30:
             return 0.0
             
         if username.isdigit():
@@ -417,11 +439,38 @@ def extract_usernames_from_text(text_content):
         if username.lower() in common_tlds:
             return 0.0
             
+        # Full context analysis
+        context = (context_before + " " + context_after).lower()
+            
+        # HUMINT strength indicators - significantly higher scores for human intelligence markers
+        humint_markers = [
+            'security researcher', 'investigator', 'analyst', 'journalist', 'officer', 'agent',
+            'goes by', 'known as', 'alias', 'handle is', 'username is', 'aka', 'nickname',
+            'real name', 'pseudonym', 'monitor', 'surveillance', 'intelligence', 'operative', 
+            'informant', 'source', 'contact', 'asset', 'target', 'subject', 'person of interest'
+        ]
+        
+        if any(marker in context for marker in humint_markers):
+            score += 0.4  # Strong boost for HUMINT context
+        
+        # Dark web and cryptocurrency indicators
+        dark_web_markers = [
+            'tor', 'onion', 'dark web', 'hidden service', 'encrypted', 'anonymous', 'secure chat',
+            'pgp key', 'bitcoin', 'ethereum', 'monero', 'zcash', 'cryptocurrency', 'wallet',
+            'private key', 'secure messaging', 'signal', 'keybase', 'protonmail', 'session id'
+        ]
+        
+        if any(marker in context for marker in dark_web_markers):
+            score += 0.35  # Strong boost for dark web context
+            
         # Positive signals that increase score
         
         # Username format characteristics (strong indicators)
         if '_' in username:
             score += 0.2  # Underscore is common in usernames
+        
+        if '-' in username:
+            score += 0.15  # Hyphens are sometimes used in usernames
         
         if '.' in username and not username.endswith('.'):
             score += 0.1  # Periods are sometimes used in usernames
@@ -434,11 +483,18 @@ def extract_usernames_from_text(text_content):
         if any(c.isalpha() for c in username) and any(c.isdigit() for c in username):
             score += 0.25  # Letter+number combinations are strong username indicators
             
+        # Format matches common username patterns
+        if re.match(r'^[a-z][a-z0-9_\.\-]{2,20}$', username.lower()):
+            score += 0.2  # Very conventional username format
+            
         # Context-based signals (weaker but useful)
-        context = (context_before + " " + context_after).lower()
         
         # Username preceded/followed by social media context
-        social_media_context = ['username', 'user', 'account', 'profile', 'follow', 'handle', 'connect']
+        social_media_context = [
+            'username', 'user', 'account', 'profile', 'follow', 'handle', 'connect', 'id', 
+            'social media', 'online', 'presence', 'digital', 'footprint', 'trace', 'activity',
+            'across platforms', 'log in', 'sign in', 'credentials'
+        ]
         if any(term in context for term in social_media_context):
             score += 0.15
             
@@ -447,9 +503,23 @@ def extract_usernames_from_text(text_content):
             score += 0.3
             
         # Platform mentions near username
-        platform_mentions = ['on twitter', 'on instagram', 'on github', 'my github', 'my twitter', 'find me on']
+        platform_mentions = [
+            'on twitter', 'on instagram', 'on github', 'github.com', 'twitter.com', 'instagram.com',
+            'on telegram', 'on signal', 'on discord', 'on reddit', 'on linkedin', 'on tiktok',
+            'my github', 'my twitter', 'my handle', 'find me on', 'connect with me', 'follow me at',
+            'message me', 'dm me', 'reach out', 'contact me via', 'find me at', 'profile at'
+        ]
         if any(mention in context for mention in platform_mentions):
             score += 0.2
+        
+        # Context includes verification or identification language
+        verification_terms = [
+            'verify', 'verification', 'confirm', 'identification', 'identify', 'authenticate',
+            'validation', 'validate', 'legitimate', 'official', 'real', 'genuine', 'authentic',
+            'confirmed', 'verified'
+        ]
+        if any(term in context for term in verification_terms):
+            score += 0.15
             
         # Negative signals
         
@@ -460,6 +530,11 @@ def extract_usernames_from_text(text_content):
         # Looks like a sentence fragment (multiple words)
         if ' ' in username:
             score -= 0.4
+            
+        # Contains too many special characters (unusual for usernames)
+        special_char_count = sum(1 for c in username if not c.isalnum())
+        if special_char_count > 3:
+            score -= 0.2 * (special_char_count - 3)
             
         # Normalize final score to 0-1 range
         return max(0.0, min(1.0, score))
@@ -695,6 +770,7 @@ def process_attached_file(filename):
         "social_profiles": {},
         "potential_usernames": [],
         "potential_image_urls": [],
+        "dark_web_information": {},
         "processing_timestamp": datetime.now().isoformat()
     }
     
@@ -710,6 +786,11 @@ def process_attached_file(filename):
             
             # Extract potential image URLs
             results["potential_image_urls"] = extract_image_urls_from_text(content)
+            
+            # Extract dark web information
+            # Create a mock HTML string to reuse the extract_dark_web_information function
+            mock_html = f"<html><body>{content}</body></html>"
+            results["dark_web_information"] = extract_dark_web_information(mock_html, content)
         
         return results
     
