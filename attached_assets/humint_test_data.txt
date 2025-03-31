@@ -1,0 +1,37 @@
+# HUMINT Test Data
+
+## Personal Information
+My name is James Wilson and I'm a Cybersecurity Researcher at DigitalDefense Inc.
+Born on February 15, 1985, I've been working in the security field for over 12 years.
+I graduated from MIT with a degree in Computer Science in 2007.
+You can reach me at james.wilson@example.com or call my office at (555) 123-4567.
+
+## Professional Background
+I currently work with Dr. Sarah Johnson, the Chief Security Officer at our company.
+My previous employer was CyberGuard Technologies, where I worked as a Senior Security Analyst.
+My colleague Robert Chen and I co-authored the paper "Advanced Threat Detection Methods" in 2019.
+I'm also an adjunct professor at Stanford University teaching cybersecurity courses.
+
+## Personal Relationships
+My wife, Emily Wilson, is a software engineer at Google.
+We have two children, Michael (10) and Sophia (7).
+My brother David Wilson works in finance at JP Morgan.
+I regularly collaborate with my mentor Dr. Richard Thompson from the University of Washington.
+
+## Online Presence
+You can find me on Twitter as @james_security and on GitHub under the username jwilson_sec.
+I maintain a blog at https://securityinsights.example.com where I publish my research.
+My LinkedIn profile is at https://linkedin.com/in/jameswilson-security
+I'm known in security forums as "SecureJames" or sometimes as "JW_Defender".
+
+## Skills and Interests
+I specialize in malware analysis, penetration testing, and incident response.
+I speak English, Spanish, and some Mandarin Chinese.
+Outside of work, I enjoy rock climbing, playing chess, and amateur photography.
+I've been a member of the International Association of Cybersecurity Professionals since 2010.
+
+## Recent Activities
+Last month, I presented at the CyberSec Conference in Boston about emerging threats.
+I'm currently working on a book about practical cybersecurity defenses, to be published next year.
+My team and I recently responded to a major security incident affecting a Fortune 500 company.
+Next week, I'll be traveling to Washington DC to speak at a government security symposium.

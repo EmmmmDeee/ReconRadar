@@ -5,6 +5,8 @@ import re
 import json
 import requests
 from urllib.parse import urlparse, parse_qs, unquote
+from datetime import datetime
+import string
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -384,7 +386,7 @@ def extract_geolocation_data(html_content: str, url: str = None) -> dict:
         logging.error(f"Error extracting geolocation data: {e}")
         return geolocation_data
 
-def extract_dark_web_information(html_content: str, text_content: str = None) -> dict:
+def extract_dark_web_information(html_content = None, text_content = None) -> dict:
     """
     Extract dark web and cybersecurity-related information from HTML content.
     Detects onion services, cryptocurrency addresses, secure messaging IDs, and more.
@@ -549,6 +551,391 @@ def extract_dark_web_information(html_content: str, text_content: str = None) ->
     except Exception as e:
         logging.error(f"Error extracting dark web information: {e}")
         return dark_web_info
+
+def extract_humint_data(text_content = None, html_content = None) -> dict:
+    """
+    Extract human intelligence (HUMINT) data from content, focusing on personal information.
+    This function identifies names, occupations, biographical details, relationships, and other
+    personal attributes that are valuable for human intelligence gathering.
+    
+    Args:
+        text_content (str): Text content to analyze for HUMINT data
+        html_content (str, optional): HTML content for additional extraction from structured data
+        
+    Returns:
+        dict: Dictionary containing comprehensive HUMINT data
+    """
+    # Initialize the results structure
+    humint_data = {
+        "names": [],              # Full names detected
+        "aliases": [],            # Nicknames, handles, aliases
+        "organizations": [],      # Organizations and affiliations
+        "occupations": [],        # Job titles and professional roles
+        "biographical": {         # Biographical information
+            "age": None,
+            "birth_date": None,
+            "education": [],
+            "employment_history": [],
+            "languages": [],
+            "skills": []
+        },
+        "relationships": [],      # Personal and professional relationships
+        "interests": [],          # Hobbies, interests, activities
+        "personal_attributes": {  # Identifying personal characteristics
+            "gender": None,
+            "nationality": None,
+            "appearance": [],
+            "personality_traits": []
+        },
+        "timestamps": {           # Digital activity timestamps
+            "last_seen": None,
+            "registration_date": None,
+            "activity_pattern": None
+        },
+        "confidence": 0.0,        # Overall confidence score
+        "source": None            # Source of extracted data
+    }
+    
+    try:
+        # Process text content for HUMINT data
+        if not text_content:
+            return humint_data
+            
+        # 1. Extract names using refined patterns
+        # Look for formal name patterns with titles
+        name_patterns = [
+            # Formal name patterns with titles
+            (r'(?:Mr\.|Mrs\.|Ms\.|Dr\.|Prof\.|Sir|Madam|Lady|Lord)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 0.9),
+            
+            # Full name patterns (First Last)
+            (r'\b(?!(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December|AM|PM|UTC|GMT|EST|PST|CST|MST|EDT|PDT|CDT|MDT)(?:\s|\.|,|$))'
+             r'([A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{0,3})?\s+[A-Z][a-z]{2,20})\b', 0.8),
+            
+            # Name patterns with middle initial
+            (r'\b([A-Z][a-z]{2,20}\s+[A-Z]\.\s+[A-Z][a-z]{2,20})\b', 0.85),
+            
+            # Authored by or written by patterns
+            (r'(?:authored|written|prepared|compiled|edited|reported)\s+by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})', 0.85),
+            
+            # Contact person patterns
+            (r'(?:contact|reach out to|speak with|talk to|email|call)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})', 0.75),
+            
+            # Name followed by title or role
+            (r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}),?\s+(?:the|our|senior|chief|head|lead|principal|director of|manager of|professor of)', 0.8),
+            
+            # "I am" or "My name is" patterns for self-identification
+            (r'(?:I am|my name is|I\'m)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})', 0.9)
+        ]
+        
+        # Extract names
+        for pattern, confidence in name_patterns:
+            matches = re.findall(pattern, text_content)
+            for match in matches:
+                if isinstance(match, tuple):
+                    match = match[0]  # Extract from group
+                name = match.strip()
+                # Validate the name (basic check for reasonable length and format)
+                if len(name.split()) >= 2 and all(part[0].isupper() for part in name.split()):
+                    if name not in humint_data["names"]:
+                        humint_data["names"].append(name)
+                        if confidence > humint_data["confidence"]:
+                            humint_data["confidence"] = confidence
+                            humint_data["source"] = "name_pattern"
+        
+        # 2. Extract aliases and nicknames
+        alias_patterns = [
+            # Known by or goes by patterns
+            (r'(?:known as|goes by|aka|a\.k\.a\.|alias|called|nicknamed|nickname)\s+["\']?([A-Za-z][A-Za-z0-9_\.\-]{2,30})["\']?', 0.9),
+            
+            # Handle patterns for social media
+            (r'(?:handle|username|user name|screen name|tag)\s+(?:is|:)\s+["\']?(@?)([A-Za-z][A-Za-z0-9_\.\-]{2,30})["\']?', 0.85),
+            
+            # Online identity patterns
+            (r'(?:online|on the internet|on social media|on twitter|on instagram|on facebook|on linkedin)\s+(?:as|using)\s+["\']?(@?)([A-Za-z][A-Za-z0-9_\.\-]{2,30})["\']?', 0.8)
+        ]
+        
+        for pattern, confidence in alias_patterns:
+            matches = re.findall(pattern, text_content)
+            for match in matches:
+                if isinstance(match, tuple):
+                    if len(match) > 1:
+                        alias = (match[0] + match[1]).strip()
+                    else:
+                        alias = match[0].strip()
+                else:
+                    alias = match.strip()
+                
+                # Check for minimum length and avoid common words
+                if len(alias) >= 3 and alias.lower() not in ["the", "and", "but", "for", "not", "with"]:
+                    if alias not in humint_data["aliases"]:
+                        humint_data["aliases"].append(alias)
+                        if confidence > humint_data["confidence"]:
+                            humint_data["confidence"] = confidence
+                            humint_data["source"] = "alias_pattern"
+        
+        # 3. Extract organizations and affiliations
+        org_patterns = [
+            # Works for / employed by patterns
+            (r'(?:works for|employed by|employed at|works at|affiliated with|member of|associated with)\s+([A-Z][A-Za-z0-9\'\s&\.]{2,50})\b', 0.85),
+            
+            # Organizational roles
+            (r'(?:CEO|CFO|CTO|COO|President|Director|Manager|Head|Lead|Chief|Officer)\s+(?:of|at)\s+([A-Z][A-Za-z0-9\'\s&\.]{2,50})\b', 0.9),
+            
+            # Former affiliation patterns
+            (r'(?:former|ex-|previously|once)\s+(?:\w+\s+){0,2}(?:at|with|for)\s+([A-Z][A-Za-z0-9\'\s&\.]{2,50})\b', 0.75)
+        ]
+        
+        for pattern, confidence in org_patterns:
+            matches = re.findall(pattern, text_content)
+            for match in matches:
+                if isinstance(match, tuple):
+                    org = match[0].strip()
+                else:
+                    org = match.strip()
+                
+                # Validate organization name (basic checks)
+                if len(org) >= 3 and org[0].isupper():
+                    if org not in humint_data["organizations"]:
+                        humint_data["organizations"].append(org)
+                        if confidence > humint_data["confidence"]:
+                            humint_data["confidence"] = confidence
+                            humint_data["source"] = "organization_pattern"
+        
+        # 4. Extract occupations and job titles
+        occupation_patterns = [
+            # Standard job title patterns
+            (r'\b((?:Senior|Junior|Chief|Lead|Head|Principal|Executive|Assistant|Associate|Director of|Manager of|VP of|Vice President of)?\s*'
+             r'(?:Software Engineer|Data Scientist|Security Researcher|Analyst|Developer|Architect|Designer|Consultant|'
+             r'Investigator|Researcher|Professor|Doctor|Lawyer|Accountant|Marketer|Journalist|Writer|Editor|'
+             r'Specialist|Coordinator|Administrator|Supervisor|Officer|Agent|Expert|Technician|Engineer|Scientist))\b', 0.85),
+            
+            # Role/position patterns
+            (r'(?:role|position|job|title|occupation|profession)\s+(?:is|as|of|:)\s+([A-Za-z][A-Za-z\s\-]{2,40}?)\b', 0.8),
+            
+            # Self-identification of profession
+            (r'(?:I am|I\'m)\s+(?:a|an)\s+([A-Za-z][A-Za-z\s\-]{2,40}?)\b', 0.7)
+        ]
+        
+        for pattern, confidence in occupation_patterns:
+            matches = re.findall(pattern, text_content)
+            for match in matches:
+                if isinstance(match, tuple):
+                    occupation = match[0].strip()
+                else:
+                    occupation = match.strip()
+                
+                # Validate occupation (basic check for reasonable length)
+                if len(occupation) >= 3 and occupation.lower() not in ["the", "and", "but", "for", "not", "with"]:
+                    if occupation not in humint_data["occupations"]:
+                        humint_data["occupations"].append(occupation)
+                        if confidence > humint_data["confidence"]:
+                            humint_data["confidence"] = confidence
+                            humint_data["source"] = "occupation_pattern"
+        
+        # 5. Extract biographical information
+        # Age patterns
+        age_patterns = [
+            r'\b(?:aged?|is|am|turned)\s+(\d{1,2})\s+(?:years\s+old|year[s]?\s+old|years|year[s]?)\b',
+            r'\b(\d{1,2})[- ]years?[- ]old\b'
+        ]
+        
+        for pattern in age_patterns:
+            matches = re.findall(pattern, text_content)
+            if matches:
+                try:
+                    age = int(matches[0])
+                    if 1 <= age <= 120:  # Basic age validation
+                        humint_data["biographical"]["age"] = age
+                        if humint_data["confidence"] < 0.85:
+                            humint_data["confidence"] = 0.85
+                            humint_data["source"] = "age_pattern"
+                        break
+                except (ValueError, IndexError):
+                    pass
+        
+        # Birth date patterns
+        birth_date_patterns = [
+            # Various date formats (MM/DD/YYYY, DD/MM/YYYY, YYYY-MM-DD, etc.)
+            r'\b(?:born|birth(?:day|date)?|dob)\s+(?:on|:)?\s+(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})',
+            r'\b(?:born|birth(?:day|date)?|dob)\s+(?:on|:)?\s+(\d{2,4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2})',
+            # Word format dates
+            r'\b(?:born|birth(?:day|date)?|dob)\s+(?:on|:)?\s+([A-Z][a-z]{2,8}\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})',
+            r'\b(?:born|birth(?:day|date)?|dob)\s+(?:on|:)?\s+(?:the\s+)?(\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?[A-Z][a-z]{2,8},?\s+\d{4})'
+        ]
+        
+        for pattern in birth_date_patterns:
+            matches = re.findall(pattern, text_content, re.IGNORECASE)
+            if matches:
+                birth_date = matches[0]
+                humint_data["biographical"]["birth_date"] = birth_date
+                if humint_data["confidence"] < 0.9:
+                    humint_data["confidence"] = 0.9
+                    humint_data["source"] = "birth_date_pattern"
+                break
+        
+        # Education patterns
+        education_patterns = [
+            # Degrees, schools, and education history
+            (r'(?:graduated|studied|degree|education|alumni|alumnus|alumna|student)\s+(?:from|at|in|with)\s+([A-Z][A-Za-z\'\s&\.]{2,60})\b', 0.85),
+            (r'\b(?:B\.?S\.?|M\.?S\.?|B\.?A\.?|M\.?A\.?|Ph\.?D\.?|M\.?B\.?A\.?|J\.?D\.?|M\.?D\.?)\s+(?:in|from|degree)?\s+([A-Za-z\'\s&\.]{2,60})\b', 0.9),
+            (r'\b(?:Bachelor[\'s]?|Master[\'s]?|Doctorate|Doctoral|Undergraduate|Graduate|Postgraduate)\s+(?:degree|program|education|studies)?\s+(?:in|from|at)?\s+([A-Za-z\'\s&\.]{2,60})\b', 0.85)
+        ]
+        
+        for pattern, confidence in education_patterns:
+            matches = re.findall(pattern, text_content)
+            for match in matches:
+                if isinstance(match, tuple):
+                    education = match[0].strip()
+                else:
+                    education = match.strip()
+                
+                # Validate education information
+                if len(education) >= 3:
+                    if education not in humint_data["biographical"]["education"]:
+                        humint_data["biographical"]["education"].append(education)
+                        if confidence > humint_data["confidence"]:
+                            humint_data["confidence"] = confidence
+                            humint_data["source"] = "education_pattern"
+        
+        # 6. Extract relationships
+        relationship_patterns = [
+            # Family relationships
+            (r'(?:father|mother|husband|wife|spouse|partner|brother|sister|sibling|son|daughter|child|parent|grandfather|grandmother|grandparent|grandchild|uncle|aunt|cousin|nephew|niece|in-law)\s+(?:is|was|of|to)?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})', 0.9),
+            
+            # Professional relationships
+            (r'(?:colleague|coworker|co-worker|associate|boss|supervisor|manager|assistant|secretary|mentor|mentee|advisor|advisee|team member)\s+(?:is|was|of|to|at)?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})', 0.85),
+            
+            # Social relationships
+            (r'(?:friend|roommate|classmate|neighbor|neighbor|acquaintance|contact|partner|significant other)\s+(?:is|was|named)?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})', 0.8)
+        ]
+        
+        for pattern, confidence in relationship_patterns:
+            matches = re.findall(pattern, text_content)
+            for match in matches:
+                if isinstance(match, tuple):
+                    relationship = match[0].strip()
+                else:
+                    relationship = match.strip()
+                
+                # Validate relationship information (basic check)
+                if len(relationship) >= 3:
+                    if relationship not in humint_data["relationships"]:
+                        humint_data["relationships"].append(relationship)
+                        if confidence > humint_data["confidence"]:
+                            humint_data["confidence"] = confidence
+                            humint_data["source"] = "relationship_pattern"
+        
+        # 7. Process HTML content if available for structured HUMINT data
+        if html_content:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Look for social media profile metadata in HTML
+            meta_tags = soup.find_all('meta')
+            for tag in meta_tags:
+                # Profile information from meta tags
+                if tag.get('property') == 'profile:first_name' or tag.get('name') == 'profile:first_name':
+                    first_name = tag.get('content')
+                    if first_name and len(first_name) >= 2:
+                        if 'last_name' in humint_data:
+                            full_name = f"{first_name} {humint_data['last_name']}"
+                            if full_name not in humint_data["names"]:
+                                humint_data["names"].append(full_name)
+                                humint_data["confidence"] = max(humint_data["confidence"], 0.9)
+                                humint_data["source"] = "meta_tags"
+                
+                if tag.get('property') == 'profile:last_name' or tag.get('name') == 'profile:last_name':
+                    last_name = tag.get('content')
+                    if last_name and len(last_name) >= 2:
+                        humint_data['last_name'] = last_name
+                        if 'first_name' in humint_data:
+                            full_name = f"{humint_data['first_name']} {last_name}"
+                            if full_name not in humint_data["names"]:
+                                humint_data["names"].append(full_name)
+                                humint_data["confidence"] = max(humint_data["confidence"], 0.9)
+                                humint_data["source"] = "meta_tags"
+                
+                # Timestamp information
+                if tag.get('property') == 'profile:last_active' or tag.get('name') == 'last-modified':
+                    humint_data["timestamps"]["last_seen"] = tag.get('content')
+                    humint_data["confidence"] = max(humint_data["confidence"], 0.8)
+                    humint_data["source"] = "meta_tags"
+                
+                # Gender information
+                if tag.get('property') == 'profile:gender' or tag.get('name') == 'gender':
+                    humint_data["personal_attributes"]["gender"] = tag.get('content')
+                    humint_data["confidence"] = max(humint_data["confidence"], 0.85)
+                    humint_data["source"] = "meta_tags"
+            
+            # Extract from Schema.org structured data
+            script_tags = soup.find_all('script', type='application/ld+json')
+            for script in script_tags:
+                try:
+                    json_data = json.loads(script.string)
+                    # Handle both direct objects and arrays of objects
+                    json_objects = [json_data] if isinstance(json_data, dict) else json_data if isinstance(json_data, list) else []
+                    
+                    for obj in json_objects:
+                        # Look for Person schema
+                        if '@type' in obj and obj['@type'] == 'Person':
+                            # Extract name
+                            if 'name' in obj and obj['name'] not in humint_data["names"]:
+                                humint_data["names"].append(obj['name'])
+                                humint_data["confidence"] = max(humint_data["confidence"], 0.95)
+                                humint_data["source"] = "schema_org"
+                            
+                            # Extract job title
+                            if 'jobTitle' in obj and obj['jobTitle'] not in humint_data["occupations"]:
+                                humint_data["occupations"].append(obj['jobTitle'])
+                                humint_data["confidence"] = max(humint_data["confidence"], 0.95)
+                                humint_data["source"] = "schema_org"
+                            
+                            # Extract organization
+                            if 'worksFor' in obj:
+                                org = obj['worksFor']
+                                if isinstance(org, dict) and 'name' in org:
+                                    if org['name'] not in humint_data["organizations"]:
+                                        humint_data["organizations"].append(org['name'])
+                                        humint_data["confidence"] = max(humint_data["confidence"], 0.95)
+                                        humint_data["source"] = "schema_org"
+                                elif isinstance(org, str) and org not in humint_data["organizations"]:
+                                    humint_data["organizations"].append(org)
+                                    humint_data["confidence"] = max(humint_data["confidence"], 0.9)
+                                    humint_data["source"] = "schema_org"
+                            
+                            # Extract nationality
+                            if 'nationality' in obj:
+                                nationality = obj['nationality']
+                                if isinstance(nationality, dict) and 'name' in nationality:
+                                    humint_data["personal_attributes"]["nationality"] = nationality['name']
+                                elif isinstance(nationality, str):
+                                    humint_data["personal_attributes"]["nationality"] = nationality
+                                humint_data["confidence"] = max(humint_data["confidence"], 0.95)
+                                humint_data["source"] = "schema_org"
+                                
+                            # Extract birth date
+                            if 'birthDate' in obj and not humint_data["biographical"]["birth_date"]:
+                                humint_data["biographical"]["birth_date"] = obj['birthDate']
+                                humint_data["confidence"] = max(humint_data["confidence"], 0.95)
+                                humint_data["source"] = "schema_org"
+                                
+                                # Calculate age if birth date is available
+                                try:
+                                    birth_year = int(obj['birthDate'].split('-')[0])
+                                    current_year = datetime.now().year
+                                    if 1900 <= birth_year <= current_year:
+                                        humint_data["biographical"]["age"] = current_year - birth_year
+                                except (ValueError, IndexError, AttributeError):
+                                    pass
+                
+                except (json.JSONDecodeError, TypeError) as e:
+                    logging.warning(f"Error parsing Schema.org JSON for HUMINT data: {e}")
+        
+        # Return the filled HUMINT data structure
+        return humint_data
+    
+    except Exception as e:
+        logging.error(f"Error in HUMINT data extraction: {e}")
+        return humint_data
 
 def extract_contact_information(html_content: str) -> dict:
     """
