@@ -24,13 +24,13 @@ def get_website_text_content(url: str, timeout: int = 5) -> str:
         str: The main text content of the website, or an error message
     """
     try:
-        # Send a request to the website with a user agent
+        # Send a request to the website
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
-        # Fetch the URL content
-        downloaded = trafilatura.fetch_url(url, headers=headers)
+        # Fetch the URL content (trafilatura doesn't accept headers parameter)
+        downloaded = trafilatura.fetch_url(url)
         if not downloaded:
             # Fallback to requests if trafilatura fails
             response = requests.get(url, headers=headers, timeout=timeout)
