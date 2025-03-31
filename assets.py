@@ -24,13 +24,15 @@ def extract_social_profiles_from_text(text_content):
     """
     results = {}
     
-    # Common social media URL patterns
+    # Common social media URL patterns with enhanced matching
     patterns = {
         'Twitter': r'https?://(www\.)?(twitter|x)\.com/([A-Za-z0-9_]+)',
         'Instagram': r'https?://(www\.)?instagram\.com/([A-Za-z0-9_\.]+)/?',
         'Facebook': r'https?://(www\.)?facebook\.com/([A-Za-z0-9\.]+)/?',
         'LinkedIn': r'https?://(www\.)?linkedin\.com/in/([A-Za-z0-9_\-\.]+)/?',
         'GitHub': r'https?://(www\.)?github\.com/([A-Za-z0-9_\-]+)/?',
+        # Additional GitHub patterns for variable formats
+        'GitHub-Repo': r'github(?:\.com)?[\s:=]+(?:https?://(www\.)?github\.com/)?([A-Za-z0-9_\-]+)(?:/|\s|$)',
         'YouTube': r'https?://(www\.)?youtube\.com/(user|channel|c)/([A-Za-z0-9_\-]+)/?',
         'TikTok': r'https?://(www\.)?tiktok\.com/@([A-Za-z0-9_\.]+)/?',
         'Reddit': r'https?://(www\.)?reddit\.com/user/([A-Za-z0-9_\-]+)/?',
@@ -39,6 +41,18 @@ def extract_social_profiles_from_text(text_content):
         'Telegram': r'https?://(www\.)?t\.me/([A-Za-z0-9_]+)/?',
         'Medium': r'https?://(www\.)?medium\.com/@?([A-Za-z0-9_\-\.]+)/?',
         'Twitch': r'https?://(www\.)?twitch\.tv/([A-Za-z0-9_]+)/?',
+        # Website and blog patterns - more flexible to catch variable formats
+        'Website': r'website\s*[\s:=]+\s*[\'"]?(https?://[^\s\'"]+)[\'"]?',
+        'Blog': r'blog\s*[\s:=]+\s*[\'"]?(https?://[^\s\'"]+)[\'"]?',
+        # Special case for the spyboy website format with direct variable assignment
+        'Website-SpyBoy': r'website\s*=\s*[\'"](https?://[a-zA-Z0-9_\.\-]+\.[a-z]+/?)[\'"]',
+        'Blog-SpyBoy': r'blog\s*=\s*[\'"](https?://[a-zA-Z0-9_\.\-]+\.[a-z]+/?)[\'"]',
+        # Simple variable assignments (common in Python scripts)
+        'Website-Direct': r'website\s*=\s*[\'"](https?://[^\s\'"]+)[\'"]',
+        'Blog-Direct': r'blog\s*=\s*[\'"](https?://[^\s\'"]+)[\'"]',
+        'Twitter-Direct': r'twitter_url\s*=\s*[\'"](https?://[^\s\'"]+)[\'"]',
+        'Discord-Direct': r'discord\s*=\s*[\'"](https?://[^\s\'"]+)[\'"]',
+        'GitHub-Direct': r'github\s*=\s*[\'"](https?://[^\s\'"]+)[\'"]',
     }
     
     # Extract profile URLs based on patterns
@@ -56,6 +70,9 @@ def extract_social_profiles_from_text(text_content):
                 else:
                     username = match[-1]  # For most platforms, username is the last group
                 
+                # Initialize url to None
+                url = None
+                
                 # Reconstruct the full URL
                 if platform == 'Twitter':
                     url = f"https://twitter.com/{username}"
@@ -65,8 +82,11 @@ def extract_social_profiles_from_text(text_content):
                     url = f"https://www.facebook.com/{username}"
                 elif platform == 'LinkedIn':
                     url = f"https://www.linkedin.com/in/{username}/"
-                elif platform == 'GitHub':
+                elif platform == 'GitHub' or platform == 'GitHub-Repo':
                     url = f"https://github.com/{username}"
+                elif platform in ['Website', 'Blog', 'Website-SpyBoy', 'Blog-SpyBoy', 
+                        'Website-Direct', 'Blog-Direct', 'Twitter-Direct', 'Discord-Direct', 'GitHub-Direct']:
+                    url = username  # URL is directly captured in the regex
                 elif platform == 'YouTube':
                     subpath = match[1]  # user, channel, or c
                     url = f"https://www.youtube.com/{subpath}/{username}"
@@ -86,7 +106,11 @@ def extract_social_profiles_from_text(text_content):
                 elif platform == 'Twitch':
                     url = f"https://www.twitch.tv/{username}"
                 
-                # Use the url we already built above
+                # Skip if no URL was created
+                if url is None:
+                    continue
+                    
+                # Add URL to results collection
                 if platform in results:
                     # If the platform is already in results, append the URL to the list
                     if isinstance(results[platform], list):
@@ -108,136 +132,464 @@ def extract_social_profiles_from_text(text_content):
 
 def extract_usernames_from_text(text_content):
     """
-    Extract potential usernames from text content.
+    Extract potential usernames from text content using advanced NLP-inspired techniques.
     
     Args:
         text_content (str): Text to analyze for usernames
         
     Returns:
-        list: List of potential usernames
+        list: List of potential usernames with high confidence scores
     """
-    # Patterns to identify potential usernames
-    patterns = [
-        r'@([A-Za-z0-9_\.]+)',  # Twitter/Instagram style @username
-        r'([A-Za-z][A-Za-z0-9_\.]{2,24})'  # Generic username pattern (3-25 chars, must start with letter)
+    # Load a dictionary of common English words for better filtering
+    # This helps avoid matching standard language words as usernames
+    common_words = set([
+        'about', 'after', 'again', 'all', 'also', 'an', 'and', 'any', 'are', 'as', 'at',
+        'be', 'because', 'been', 'before', 'being', 'between', 'both', 'but', 'by',
+        'came', 'can', 'come', 'could', 'did', 'do', 'does', 'done', 'down', 'each',
+        'few', 'for', 'from', 'further', 'get', 'had', 'has', 'have', 'having', 'he',
+        'her', 'here', 'hers', 'herself', 'him', 'himself', 'his', 'how', 'if', 'in',
+        'into', 'is', 'it', 'its', 'itself', 'just', 'like', 'make', 'many', 'me',
+        'might', 'more', 'most', 'much', 'must', 'my', 'myself', 'never', 'no', 'nor',
+        'not', 'now', 'of', 'off', 'on', 'once', 'only', 'or', 'other', 'our', 'ours',
+        'ourselves', 'out', 'over', 'own', 'said', 'same', 'see', 'should', 'so', 'some',
+        'such', 'take', 'than', 'that', 'the', 'their', 'theirs', 'them', 'themselves',
+        'then', 'there', 'these', 'they', 'this', 'those', 'through', 'to', 'too', 'under',
+        'until', 'up', 'very', 'was', 'way', 'we', 'well', 'were', 'what', 'when', 'where',
+        'which', 'while', 'who', 'whom', 'why', 'will', 'with', 'would', 'you', 'your',
+        'yours', 'yourself', 'yourselves'
+    ])
+    
+    # Advanced pattern recognition for username formats
+    username_patterns = [
+        # Explicit username markers with high confidence
+        (r'(?:(?:user(?:name)?|account)(?:\s+(?:is|:))?\s+[\'"]?(@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\'"]?)', 1.0),
+        
+        # Social media style @ mentions
+        (r'@([A-Za-z0-9][A-Za-z0-9_\.]{2,24})\b', 0.9),
+        
+        # Username with common indicators
+        (r'(?:follow|add|contact|find|message)\s+(?:me|us|him|her|them)?\s+(?:at|on|via|using)?\s+[\'"]?(@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\'"]?', 0.8),
+        
+        # Generic username patterns with context clues (lower confidence)
+        (r'\b(?:my|the|their|his|her)\s+(?:id|handle|user|account)\s+(?:is|:)?\s+[\'"]?([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\'"]?', 0.7),
+        
+        # Platform-specific identifier with username
+        (r'(?:twitter|instagram|github|reddit|snapchat|tiktok)(?:.com)?(?:/|\s+)(@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})\b', 0.8),
+        
+        # Usernames in parentheses (often used in formal writing to denote handles)
+        (r'\((@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})\)', 0.6),
+        
+        # Generic usernames (lowest confidence, needs more validation)
+        (r'\b([A-Za-z][A-Za-z0-9_\.]{2,24})\b', 0.3)
     ]
     
-    # Common terms to exclude
-    exclude_terms = [
-        # Web related terms
-        'www', 'http', 'https', 'com', 'co', 'org', 'net', 'io', 'fm', 'me', 'tv',
+    # Comprehensive exclusion lists with categories
+    exclusion_categories = {
+        # Platform names and domains
+        'platforms': [
+            'twitter', 'facebook', 'instagram', 'linkedin', 'github', 'pinterest', 'reddit',
+            'tiktok', 'snapchat', 'tumblr', 'youtube', 'twitch', 'discord', 'telegram',
+            'medium', 'quora', 'flickr', 'behance', 'dribbble', 'deviantart', 'vimeo',
+            'soundcloud', 'spotify', 'blogger', 'wordpress', 'steam', 'stackoverflow', 
+            'fiverr', 'etsy', 'patreon', 'gist', 'gitlab', 'replit', 'codepen', 'trello', 
+            'anchor', 'meetup', 'imdb', 'giphy', 'goodreads', 'mixcloud', 'reverbnation', 
+            'smule', 'xing', 'houzz', 'wattpad', 'canva', 'slack', 'foursquare', 'zillow', 
+            'vsco', 'myspace', 'grubhub', 'digg', 'gravatar', 'letterboxd', 'keybase', 
+            'periscope', 'viber', 'whatsapp', 'signal', 'mastodon', 'clubhouse', 'strava',
+            'twitch', 'vimeo', 'dailymotion', 'vk', 'weibo', 'tinder', 'bumble', 'hinge'
+        ],
         
-        # Common programming terms
-        'response', 'request', 'time', 'date', 'thread', 'print', 'import', 'from',
-        'def', 'str', 'int', 'bool', 'list', 'dict', 'set', 'tuple', 'class', 'self',
-        'function', 'module', 'package', 'object', 'return', 'yield', 'except', 'try',
-        'finally', 'raise', 'assert', 'lambda', 'global', 'nonlocal', 'and', 'or', 'not',
-        'is', 'in', 'for', 'while', 'break', 'continue', 'if', 'else', 'elif', 'with',
-        'match', 'case', 'end', 'start', 'append', 'extend', 'remove', 'pop', 'clear',
-        'join', 'split', 'strip', 'lower', 'upper', 'title', 'capitalize', 'status',
-        'code', 'error', 'warning', 'info', 'debug', 'exception', 'platforms', 'items',
+        # Web and internet terms
+        'web_terms': [
+            'http', 'https', 'www', 'html', 'css', 'javascript', 'api', 'ajax', 'json',
+            'xml', 'url', 'uri', 'domain', 'server', 'client', 'browser', 'cookie', 'cache',
+            'proxy', 'firewall', 'router', 'gateway', 'bandwidth', 'download', 'upload',
+            'streaming', 'cloud', 'hosting', 'webpage', 'website', 'webserver', 'frontend',
+            'backend', 'database', 'query', 'index', 'search', 'filter', 'sort', 'link'
+        ],
         
-        # Platform names (these are often mentioned as text, not usernames)
-        'twitter', 'facebook', 'instagram', 'linkedin', 'github', 'pinterest', 'reddit',
-        'tiktok', 'snapchat', 'tumblr', 'youtube', 'twitch', 'discord', 'telegram',
-        'medium', 'quora', 'flickr', 'behance', 'dribbble', 'deviantart', 'vimeo',
-        'soundcloud', 'spotify', 'pinterest', 'blogger', 'wordpress', 'steam',
-        'stackoverflow', 'fiverr', 'etsy', 'patreon', 'gist', 'gitlab', 'replit',
-        'codepen', 'trello', 'anchor', 'meetup', 'imdb', 'giphy', 'goodreads',
-        'mixcloud', 'reverbnation', 'smule', 'xing', 'houzz', 'wattpad', 'canva',
-        'slack', 'foursquare', 'zillow', 'vsco', 'myspace', 'grubhub', 'digg',
-        'gravatar', 'letterboxd', 'about', 'angel', 'relpit', 'keybase', 'periscope',
+        # Programming terms
+        'programming': [
+            'function', 'method', 'class', 'object', 'array', 'string', 'integer', 'float',
+            'boolean', 'null', 'undefined', 'var', 'let', 'const', 'import', 'export',
+            'require', 'module', 'package', 'dependency', 'framework', 'library', 'api',
+            'interface', 'abstract', 'public', 'private', 'protected', 'static', 'final',
+            'async', 'await', 'promise', 'callback', 'event', 'listener', 'handler',
+            'exception', 'error', 'debug', 'log', 'trace', 'info', 'warn', 'fatal',
+            'assert', 'test', 'mock', 'stub', 'spy', 'request', 'response', 'get', 'post',
+            'put', 'delete', 'patch', 'header', 'body', 'parameter', 'argument', 'return',
+            'yield', 'throw', 'catch', 'try', 'finally', 'break', 'continue', 'while',
+            'for', 'foreach', 'map', 'filter', 'reduce', 'sort', 'push', 'pop', 'shift',
+            'unshift', 'join', 'split', 'slice', 'splice', 'concat'
+        ],
         
-        # Common UI and feature terms
-        'login', 'signup', 'signin', 'register', 'profile', 'account', 'password',
-        'username', 'email', 'search', 'welcome', 'logout', 'media', 'photo', 'video',
-        'image', 'audio', 'link', 'post', 'comment', 'share', 'like', 'follow', 'friend',
-        'loading', 'error', 'success', 'warning', 'failure', 'target', 'version',
-        'created', 'found', 'searching', 'note', 'false', 'none', 'true', 'null',
-        'timeout', 'invalid', 'reverse', 'clues', 'footprints', 'digital', 'visual',
-        'revealing', 'unve1ler', 'blog', 'urls', 'errors', 'timeouts', 'python3'
+        # UI and UX terms
+        'ui_terms': [
+            'button', 'input', 'form', 'label', 'select', 'option', 'checkbox', 'radio',
+            'textarea', 'dropdown', 'menu', 'navbar', 'sidebar', 'header', 'footer',
+            'main', 'section', 'article', 'div', 'span', 'container', 'wrapper', 'card',
+            'panel', 'tab', 'modal', 'dialog', 'alert', 'notification', 'toast', 'tooltip',
+            'popover', 'accordion', 'carousel', 'slider', 'progress', 'spinner', 'loader',
+            'icon', 'image', 'avatar', 'thumbnail', 'banner', 'logo', 'layout', 'grid',
+            'flex', 'responsive', 'mobile', 'desktop', 'viewport', 'media', 'query'
+        ],
+        
+        # User actions and system messages
+        'actions': [
+            'login', 'logout', 'signup', 'signin', 'register', 'create', 'delete', 'update',
+            'edit', 'view', 'show', 'hide', 'open', 'close', 'start', 'stop', 'pause',
+            'resume', 'cancel', 'submit', 'save', 'download', 'upload', 'share', 'send',
+            'receive', 'connect', 'disconnect', 'enable', 'disable', 'activate', 'deactivate',
+            'block', 'unblock', 'follow', 'unfollow', 'like', 'unlike', 'comment', 'reply',
+            'report', 'flag', 'pin', 'unpin', 'archive', 'unarchive', 'mute', 'unmute',
+            'loading', 'processing', 'generating', 'analyzing', 'checking', 'verifying',
+            'validating', 'calculating', 'searching', 'finding', 'fetching', 'retrieving'
+        ],
+        
+        # OSINT specific terms
+        'osint_terms': [
+            'osint', 'investigation', 'reconnaissance', 'intelligence', 'footprint', 'digital',
+            'trace', 'identity', 'anonymous', 'pseudonym', 'alias', 'avatar', 'profile',
+            'metadata', 'geolocation', 'timestamp', 'exif', 'search', 'discovery', 'finding',
+            'algorithm', 'analysis', 'scraping', 'crawling', 'extraction', 'enumeration',
+            'detection', 'identification', 'verification', 'validation', 'correlation',
+            'aggregation', 'collection', 'compilation', 'monitoring', 'tracking', 'tracing',
+            'unveiling', 'revealing', 'uncovering', 'exposing', 'targeting', 'unve1ler'
+        ],
+        
+        # Common file extensions
+        'file_extensions': [
+            'jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'svg', 'webp', 'ico', 'pdf', 'doc',
+            'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'rtf', 'csv', 'xml', 'json', 'html',
+            'htm', 'css', 'js', 'py', 'java', 'cpp', 'c', 'h', 'cs', 'php', 'rb', 'go', 'rs',
+            'swift', 'kt', 'ts', 'jsx', 'tsx', 'vue', 'sql', 'md', 'yml', 'yaml', 'toml', 'ini',
+            'cfg', 'conf', 'log', 'zip', 'rar', 'tar', 'gz', '7z', 'mp3', 'mp4', 'avi', 'mov',
+            'wmv', 'flv', 'wav', 'ogg', 'webm', 'exe', 'dll', 'so', 'apk', 'dmg', 'iso'
+        ]
+    }
+    
+    # Flatten the exclusion lists for easier lookup
+    all_exclusions = set()
+    for category in exclusion_categories.values():
+        all_exclusions.update(category)
+    
+    # Combine with common words
+    all_exclusions.update(common_words)
+    
+    # Domain names and TLDs to exclude
+    exclude_domains = [
+        'github.com', 'twitter.com', 'facebook.com', 'instagram.com', 'youtube.com',
+        'linkedin.com', 'pinterest.com', 'snapchat.com', 'reddit.com', 'tiktok.com',
+        'tumblr.com', 'vimeo.com', 'twitch.tv', 'spotify.com', 'soundcloud.com',
+        'medium.com', 'stackoverflow.com', 'quora.com', 'flickr.com', 'dribbble.com',
+        'behance.net', 'deviantart.com', 'wordpress.com', 'blogspot.com', 'gmail.com',
+        'yahoo.com', 'hotmail.com', 'outlook.com', 'protonmail.com', 'icloud.com',
+        'mail.com', 'aol.com', 'zoho.com'
     ]
     
-    # Common domains and URL components to exclude
-    exclude_domains = ['github.com', 'twitter.com', 'facebook.com', 'instagram.com', 
-                       'youtube.com', 'linkedin.com', 'pinterest.com', 'snapchat.com', 
-                       'reddit.com', 'tiktok.com', 'tumblr.com', 'vimeo.com', 'twitch.tv',
-                       'spotify.com', 'soundcloud.com', 'medium.com', 'stackoverflow.com',
-                       'quora.com', 'flickr.com', 'dribbble.com', 'behance.net', 'deviantart.com',
-                       'wordpress.com', 'blogspot.com']
+    # TLDs to filter out standalone mentions
+    common_tlds = [
+        'com', 'org', 'net', 'io', 'ai', 'app', 'co', 'me', 'dev', 'info', 'edu',
+        'gov', 'int', 'mil', 'biz', 'name', 'pro', 'aero', 'museum', 'coop', 'jobs',
+        'travel', 'xyz', 'online', 'site', 'website', 'blog', 'tech', 'store', 'shop'
+    ]
     
-    # Check if a string might be a valid username
-    def is_likely_username(username):
-        # Basic checks
-        if len(username) < 3 or len(username) > 25:
-            return False
+    # Create a scoring function that uses multiple signals to rate username likelihood
+    def score_username(username, context_before="", context_after=""):
+        """
+        Score a potential username based on multiple heuristics.
         
-        if username.isdigit():
-            return False
-        
-        # Exclude common programming terms and domains
-        if username.lower() in exclude_terms:
-            return False
-        
-        # Exclude domains and URL components
-        for domain in exclude_domains:
-            if domain in username:
-                return False
+        Args:
+            username: The potential username to score
+            context_before: Text appearing before the username (for context analysis)
+            context_after: Text appearing after the username (for context analysis)
             
-        # Check for likely username formatting (not just common words)
-        # Must contain an underscore, period, or combination of letters and numbers
-        has_underscore = '_' in username
-        has_period = '.' in username
-        has_mixed_case = username.lower() != username and username.upper() != username
-        has_letter_number_mix = any(c.isalpha() for c in username) and any(c.isdigit() for c in username)
+        Returns:
+            float: A score between 0 and 1, where higher values indicate higher confidence
+        """
+        # Start with a neutral base score
+        score = 0.5
         
-        return has_underscore or has_period or has_mixed_case or has_letter_number_mix
+        # Basic disqualifiers (absolute)
+        if len(username) < 3 or len(username) > 25:
+            return 0.0
+            
+        if username.isdigit():
+            return 0.0
+            
+        # Check if it's a common excluded term
+        if username.lower() in all_exclusions:
+            return 0.0
+            
+        # Check if it contains domain names
+        for domain in exclude_domains:
+            if domain in username.lower():
+                return 0.0
+                
+        # Check if it's just a TLD
+        if username.lower() in common_tlds:
+            return 0.0
+            
+        # Positive signals that increase score
+        
+        # Username format characteristics (strong indicators)
+        if '_' in username:
+            score += 0.2  # Underscore is common in usernames
+        
+        if '.' in username and not username.endswith('.'):
+            score += 0.1  # Periods are sometimes used in usernames
+            
+        # Mixed case that's not at the beginning (camelCase, etc.)
+        if username.lower() != username and username.upper() != username:
+            score += 0.15  # Intentional camelCase is a good username signal
+            
+        # Combination of letters and numbers (very common in usernames)
+        if any(c.isalpha() for c in username) and any(c.isdigit() for c in username):
+            score += 0.25  # Letter+number combinations are strong username indicators
+            
+        # Context-based signals (weaker but useful)
+        context = (context_before + " " + context_after).lower()
+        
+        # Username preceded/followed by social media context
+        social_media_context = ['username', 'user', 'account', 'profile', 'follow', 'handle', 'connect']
+        if any(term in context for term in social_media_context):
+            score += 0.15
+            
+        # Preceded by @ symbol is a strong indicator
+        if '@' + username.lower() in context or '/@' + username.lower() in context:
+            score += 0.3
+            
+        # Platform mentions near username
+        platform_mentions = ['on twitter', 'on instagram', 'on github', 'my github', 'my twitter', 'find me on']
+        if any(mention in context for mention in platform_mentions):
+            score += 0.2
+            
+        # Negative signals
+        
+        # Looks like a file extension
+        if '.' in username and username.split('.')[-1].lower() in exclusion_categories['file_extensions']:
+            score -= 0.3
+            
+        # Looks like a sentence fragment (multiple words)
+        if ' ' in username:
+            score -= 0.4
+            
+        # Normalize final score to 0-1 range
+        return max(0.0, min(1.0, score))
     
-    usernames = set()
-    for pattern in patterns:
-        matches = re.findall(pattern, text_content)
+    # Collect username candidates with their confidence scores
+    username_candidates = []
+    
+    # Extract usernames using the pattern matching
+    for pattern, base_confidence in username_patterns:
+        matches = re.finditer(pattern, text_content, re.IGNORECASE)
         for match in matches:
-            if is_likely_username(match):
-                usernames.add(match)
+            # Extract the username and the surrounding context for better analysis
+            match_start, match_end = match.span()
+            # Get surrounding context (up to 50 chars on each side)
+            context_start = max(0, match_start - 50)
+            context_end = min(len(text_content), match_end + 50)
+            context_before = text_content[context_start:match_start]
+            context_after = text_content[match_end:context_end]
+            
+            # Extract username based on pattern type
+            if len(match.groups()) == 1:
+                username = match.group(1)
+            elif len(match.groups()) >= 2 and match.group(1) == '@':
+                # Handle patterns that capture both @ and the username
+                username = match.group(2)
+            elif len(match.groups()) >= 2:
+                username = match.group(2)
+            else:
+                continue  # Skip if pattern doesn't match expected groups
+            
+            # Calculate confidence score
+            confidence = score_username(username, context_before, context_after)
+            
+            # Apply base confidence from pattern type
+            confidence = confidence * base_confidence
+            
+            # Only include usernames with high confidence
+            if confidence > 0.6:  # Higher threshold for better precision
+                username_candidates.append((username, confidence))
     
-    return list(usernames)
+    # Sort by confidence score (highest first) and remove duplicates while preserving order
+    seen = set()
+    high_confidence_usernames = []
+    
+    for username, confidence in sorted(username_candidates, key=lambda x: x[1], reverse=True):
+        if username.lower() not in seen:
+            seen.add(username.lower())
+            high_confidence_usernames.append(username)
+    
+    return high_confidence_usernames[:30]  # Return top 30 usernames to avoid overwhelming results
 
 def extract_image_urls_from_text(text_content):
     """
-    Extract potential image URLs from text content.
+    Extract potential image URLs from text content using advanced pattern recognition.
     
     Args:
         text_content (str): Text to analyze for image URLs
         
     Returns:
-        list: List of potential image URLs
+        list: List of potential image URLs with high confidence
     """
-    # Common image URL patterns
-    patterns = [
-        r'https?://[^\s]+\.(jpg|jpeg|png|gif|bmp|webp|svg|tiff)',  # Direct image URLs
-        r'https?://(www\.)?(imgur|i\.imgur)\.com/[^\s/]+',  # Imgur
-        r'https?://(www\.)?flickr\.com/photos/[^\s/]+',  # Flickr
-        r'https?://(www\.)?instagram\.com/p/[^\s/]+',  # Instagram posts
-        r'https?://(www\.)?pbs\.twimg\.com/media/[^\s/]+',  # Twitter images
+    # Comprehensive image URL patterns with confidence scores
+    # Format: (pattern, confidence_score, needs_validation)
+    image_patterns = [
+        # Direct image URLs with common extensions (highest confidence)
+        (r'(https?://[^\s\'"\)]+\.(jpg|jpeg|png|gif|bmp|webp|svg|tiff))(?:\s|$|[,.\'"\)])', 0.95, False),
+        
+        # Common image hosting services
+        (r'(https?://(?:www\.)?imgur\.com/[a-zA-Z0-9]{5,7})(?:[/\s]|$)', 0.9, True),  # Imgur links
+        (r'(https?://i\.imgur\.com/[a-zA-Z0-9]{5,7}\.[a-z]{3,4})(?:[/\s]|$)', 0.95, False),  # Direct Imgur
+        (r'(https?://(?:www\.)?flickr\.com/photos/[^/\s]+/\d+)(?:[/\s]|$)', 0.85, True),  # Flickr
+        
+        # Social media image links
+        (r'(https?://(?:www\.)?instagram\.com/p/[a-zA-Z0-9_-]{10,12})(?:[/\s]|$)', 0.8, True),  # Instagram
+        (r'(https?://pbs\.twimg\.com/media/[a-zA-Z0-9_-]+\.[a-z]{3,4})(?:[/\s]|$)', 0.9, False),  # Twitter
+        (r'(https?://(?:www\.)?pinterest\.com/pin/\d+)(?:[/\s]|$)', 0.75, True),  # Pinterest
+        
+        # Image CDNs and media servers
+        (r'(https?://[^\s\'"\)]+\.cloudfront\.net/[^\s\'"\)]+\.[a-z]{3,4})(?:\s|$|[,.\'"\)])', 0.9, False),
+        (r'(https?://[^\s\'"\)]+\.akamaized\.net/[^\s\'"\)]+\.[a-z]{3,4})(?:\s|$|[,.\'"\)])', 0.9, False),
+        (r'(https?://[^\s\'"\)]+\.staticflickr\.com/[^\s\'"\)]+)(?:\s|$|[,.\'"\)])', 0.9, False),
+        (r'(https?://[^\s\'"\)]+\.googleusercontent\.com/[^\s\'"\)]+)(?:\s|$|[,.\'"\)])', 0.9, True),
+        (r'(https?://[^\s\'"\)]+\.ggpht\.com/[^\s\'"\)]+)(?:\s|$|[,.\'"\)])', 0.85, True),
+        
+        # Image search and reverse image search URLs
+        (r'(https?://(?:www\.)?google\.com/imgres\?[^\s\'"\)]+)(?:\s|$|[,.\'"\)])', 0.7, True),
+        (r'(https?://(?:www\.)?tineye\.com/search/[^\s\'"\)]+)(?:\s|$|[,.\'"\)])', 0.7, True),
+        (r'(https?://yandex\.com/images/search\?[^\s\'"\)]+)(?:\s|$|[,.\'"\)])', 0.7, True),
+        
+        # Special patterns for reverse image search templates (from unve1ler code)
+        (r'(https?://lens\.google\.com/uploadbyurl\?url=\{image_link\})(?:\\n)?(?:\s|$|[,.\'"\)])', 0.8, False),
+        (r'(https?://www\.bing\.com/images/search\?.*?imgurl:\{image_link\})(?:\\n)?(?:\s|$|[,.\'"\)])', 0.8, False),
+        (r'(https?://yandex\.com/images/search\?.*?url=\{image_link\})(?:\\n)?(?:\s|$|[,.\'"\)])', 0.8, False),
+        (r'(https?://graph\.baidu\.com/details\?.*?image=\{image_link\})(?:\\n)?(?:\s|$|[,.\'"\)])', 0.8, False),
+        # Also match special formatted strings in Python f-strings found in unve1ler code
+        (r'f["\'].+?(https?://lens\.google\.com/uploadbyurl\?url=\{image_link\}).+?["\']', 0.8, False),
+        (r'f["\'].+?(https?://www\.bing\.com/images/search\?.+?imgurl:\{image_link\}).+?["\']', 0.8, False),
+        (r'f["\'].+?(https?://yandex\.com/images/search\?.+?url=\{image_link\}).+?["\']', 0.8, False),
+        (r'f["\'].+?(https?://graph\.baidu\.com/details\?.+?image=\{image_link\}).+?["\']', 0.8, False),
+        # SpyBoy-specific format with color codes like f"{G}Google Lens: {Y}https://..."
+        (r'[{][A-Z][}](?:Google Lens|Bing|Yandex|Baidu)[:]?\s*[{][A-Z][}](https?://.+?\{image_link\})', 0.9, False),
+        
+        # General photo site links (might contain images but need validation)
+        (r'(https?://(?:www\.)?500px\.com/photo/\d+/[^\s\'"\)]+)(?:\s|$|[,.\'"\)])', 0.65, True),
+        (r'(https?://(?:www\.)?unsplash\.com/photos/[a-zA-Z0-9_-]+)(?:\s|$|[,.\'"\)])', 0.8, True),
+        (r'(https?://(?:www\.)?pexels\.com/photo/[^\s\'"\)]+)(?:\s|$|[,.\'"\)])', 0.8, True),
+        
+        # URLs with 'image' in the path (lower confidence, needs validation)
+        (r'(https?://[^\s\'"\)]+/(?:images|imgs|photos|pictures|media)/[^\s\'"\)]+)(?:\s|$|[,.\'"\)])', 0.6, True),
+        
+        # URLs with common image query parameters (lower confidence, needs validation)
+        (r'(https?://[^\s\'"\)]+\?(?:[^&]*&)*(?:image|img|photo|picture)=[^\s&\'"\)]+)(?:\s|$|[,.\'"\)])', 0.5, True)
     ]
     
-    image_urls = []
-    for pattern in patterns:
-        matches = re.findall(pattern, text_content)
-        for match in matches:
-            if isinstance(match, tuple):
-                # Skip the extension part captured by the first pattern
-                continue
-            
-            # Find the full URL that matched
-            url_pattern = r'https?://[^\s]+' + re.escape(match)
-            full_urls = re.findall(url_pattern, text_content)
-            if full_urls:
-                for url in full_urls:
-                    if url not in image_urls:
-                        image_urls.append(url)
+    # Common image hosting domains for validation
+    image_domains = [
+        'imgur.com', 'i.imgur.com', 'flickr.com', 'staticflickr.com', 'instagram.com', 
+        'pbs.twimg.com', 'pinimg.com', 'pinterest.com', 'unsplash.com', 'pexels.com', 
+        'pixabay.com', '500px.com', 'deviantart.com', 'artstation.com', 'dropbox.com', 
+        'drive.google.com', 'photos.google.com', 'cloudfront.net', 'akamaized.net', 
+        'googleusercontent.com', 'ggpht.com', 'photobucket.com', 'giphy.com', 
+        'media.giphy.com', 'tenor.com', 'gfycat.com', 'imgflip.com', 'cdn.discordapp.com'
+    ]
     
-    return image_urls
+    # Contexts that strongly suggest image URLs
+    image_contexts = [
+        'image', 'picture', 'photo', 'img', 'pic', 'avatar', 'thumbnail', 'banner',
+        'screenshot', 'snapshot', 'gallery', 'album', 'photography', 'photographer',
+        'camera', 'jpeg', 'jpg', 'png', 'gif', 'selfie', 'portrait', 'profile picture'
+    ]
+    
+    def validate_url(url, context_text=""):
+        """
+        Validate if a URL is likely an image URL based on various heuristics.
+        
+        Args:
+            url: The URL to validate
+            context_text: Surrounding text for context analysis
+            
+        Returns:
+            float: A confidence score between 0 and 1
+        """
+        # Start with a neutral score
+        score = 0.5
+        
+        # Check for direct image file extensions
+        if re.search(r'\.(jpg|jpeg|png|gif|bmp|webp|svg|tiff)(\?|$)', url.lower()):
+            score += 0.4
+            
+        # Check for known image hosting domains
+        for domain in image_domains:
+            if domain in url.lower():
+                score += 0.25
+                break
+                
+        # Check for image-related paths
+        if re.search(r'/(img|image|images|photos|pictures|media|pics|thumbnails|avatars)/', url.lower()):
+            score += 0.2
+            
+        # Check for image-related context
+        context_lower = context_text.lower()
+        for term in image_contexts:
+            if term in context_lower:
+                score += 0.15
+                break
+                
+        # Check for image-related query parameters
+        if re.search(r'[?&](img|image|photo|picture|avatar|thumbnail)=', url.lower()):
+            score += 0.2
+            
+        # Penalize URLs that are likely not images
+        if re.search(r'/(about|contact|login|signup|terms|policy|help|faq|search|cart|checkout)(/|$)', url.lower()):
+            score -= 0.3
+            
+        # Normalize final score to 0-1 range
+        return max(0.0, min(1.0, score))
+    
+    # Collect image URL candidates with their confidence scores
+    url_candidates = []
+    
+    # Extract URLs using pattern matching
+    for pattern, base_confidence, needs_validation in image_patterns:
+        matches = re.finditer(pattern, text_content, re.IGNORECASE)
+        for match in matches:
+            # Extract the URL
+            if len(match.groups()) >= 1:
+                url = match.group(1)
+                
+                # Get surrounding context for validation
+                match_start, match_end = match.span()
+                context_start = max(0, match_start - 50)
+                context_end = min(len(text_content), match_end + 50)
+                context_text = text_content[context_start:context_end]
+                
+                # Calculate confidence score
+                confidence = base_confidence
+                
+                # Additional validation if needed
+                if needs_validation:
+                    validation_score = validate_url(url, context_text)
+                    confidence = (confidence + validation_score) / 2
+                
+                # Only include URLs with reasonable confidence
+                if confidence > 0.5:  # Threshold for inclusion
+                    url_candidates.append((url, confidence))
+    
+    # Remove duplicates and sort by confidence
+    seen_urls = set()
+    high_confidence_urls = []
+    
+    for url, confidence in sorted(url_candidates, key=lambda x: x[1], reverse=True):
+        normalized_url = url.split('?')[0].rstrip('/')  # Normalize by removing query strings and trailing slashes
+        if normalized_url not in seen_urls:
+            seen_urls.add(normalized_url)
+            high_confidence_urls.append(url)
+    
+    return high_confidence_urls[:20]  # Return top 20 image URLs
 
 def process_attached_file(filename):
     """
