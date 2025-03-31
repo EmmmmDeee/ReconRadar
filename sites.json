@@ -1,68 +1,191 @@
 {
-  "Instagram": "https://www.instagram.com/{username}/",
-  "Twitter": "https://twitter.com/{username}",
-  "X.com": "https://x.com/{username}",
-  "Facebook": "https://www.facebook.com/{username}",
-  "LinkedIn": "https://www.linkedin.com/in/{username}/",
-  "Pinterest": "https://www.pinterest.com/{username}/",
-  "TikTok": "https://www.tiktok.com/@{username}",
-  "Snapchat": "https://www.snapchat.com/add/{username}",
-  "YouTube": "https://www.youtube.com/user/{username}",
-  "YouTube Channel": "https://www.youtube.com/c/{username}",
-  "Reddit": "https://www.reddit.com/user/{username}",
-  "GitHub": "https://github.com/{username}",
-  "GitLab": "https://gitlab.com/{username}",
-  "Medium": "https://medium.com/@{username}",
-  "Dev.to": "https://dev.to/{username}",
-  "Quora": "https://www.quora.com/profile/{username}",
-  "Behance": "https://www.behance.net/{username}",
-  "Dribbble": "https://dribbble.com/{username}",
-  "Flickr": "https://www.flickr.com/people/{username}/",
-  "500px": "https://500px.com/{username}",
-  "Discord": "https://discord.com/users/{username}",
-  "Telegram": "https://t.me/{username}",
-  "Viber": "https://chats.viber.com/{username}",
-  "Patreon": "https://www.patreon.com/{username}",
-  "Substack": "https://{username}.substack.com",
-  "Twitch": "https://www.twitch.tv/{username}",
-  "SoundCloud": "https://soundcloud.com/{username}",
-  "Bandcamp": "https://bandcamp.com/{username}",
-  "Mixcloud": "https://www.mixcloud.com/{username}",
-  "Linktree": "https://linktr.ee/{username}",
-  "About.me": "https://about.me/{username}",
-  "Trello": "https://trello.com/{username}",
-  "ProductHunt": "https://www.producthunt.com/@{username}",
-  "Tumblr": "https://{username}.tumblr.com",
-  "Vimeo": "https://vimeo.com/{username}",
-  "Goodreads": "https://www.goodreads.com/user/show/{username}",
-  "Etsy": "https://www.etsy.com/shop/{username}",
-  "Steam": "https://steamcommunity.com/id/{username}",
-  "Mastodon.social": "https://mastodon.social/@{username}",
-  "Threads": "https://www.threads.net/@{username}",
-  "Stack Overflow": "https://stackoverflow.com/users/{username}",
-  "Kickstarter": "https://www.kickstarter.com/profile/{username}",
-  "Fiverr": "https://www.fiverr.com/{username}",
-  "DeviantArt": "https://www.deviantart.com/{username}",
-  "Ko-fi": "https://ko-fi.com/{username}",
-  "Buy Me a Coffee": "https://www.buymeacoffee.com/{username}",
-  "Gumroad": "https://gumroad.com/{username}",
-  "Itch.io": "https://itch.io/profile/{username}",
-  "Replit": "https://replit.com/@{username}",
-  "CodePen": "https://codepen.io/{username}",
-  "HackerRank": "https://www.hackerrank.com/{username}",
-  "LeetCode": "https://leetcode.com/{username}",
-  "BitBucket": "https://bitbucket.org/{username}",
-  "Bluesky": "https://bsky.app/profile/{username}",
-  "Clubhouse": "https://www.clubhouse.com/@{username}",
-  "LastFM": "https://www.last.fm/user/{username}",
-  "Spotify": "https://open.spotify.com/user/{username}",
-  "TripAdvisor": "https://www.tripadvisor.com/Profile/{username}",
-  "Chess.com": "https://www.chess.com/member/{username}",
-  "Skype": "https://web.skype.com/{username}",
-  "WhatsApp": "https://wa.me/{username}",
-  "Signal": "https://signal.me/#p/{username}",
-  "Keybase": "https://keybase.io/{username}",
-  "Crunchyroll": "https://www.crunchyroll.com/user/{username}",
-  "Letterboxd": "https://letterboxd.com/{username}",
-  "IMDb": "https://www.imdb.com/user/{username}"
+  "twitter": {
+    "check_uri": "https://twitter.com/{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404, 400, 401, 410, 403],
+    "variations": true
+  },
+  "instagram": {
+    "check_uri": "https://www.instagram.com/{username}/",
+    "check_method": "HEAD",
+    "error_status_codes": [404, 204],
+    "variations": true
+  },
+  "facebook": {
+    "check_uri": "https://www.facebook.com/{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404, 302],
+    "variations": true
+  },
+  "github": {
+    "check_uri": "https://github.com/{username}",
+    "check_method": "GET",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "gitlab": {
+    "check_uri": "https://gitlab.com/{username}",
+    "check_method": "GET",
+    "error_status_codes": [404, 302],
+    "variations": true
+  },
+  "reddit": {
+    "check_uri": "https://www.reddit.com/user/{username}/",
+    "check_method": "GET", 
+    "error_status_codes": [404, 302],
+    "variations": false,
+    "headers": {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+  },
+  "linkedin": {
+    "check_uri": "https://www.linkedin.com/in/{username}/",
+    "check_method": "HEAD",
+    "error_status_codes": [404, 999, 403],
+    "variations": true
+  },
+  "medium": {
+    "check_uri": "https://medium.com/@{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "quora": {
+    "check_uri": "https://www.quora.com/profile/{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404, 301],
+    "variations": true
+  },
+  "pinterest": {
+    "check_uri": "https://www.pinterest.com/{username}/",
+    "check_method": "HEAD",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "soundcloud": {
+    "check_uri": "https://soundcloud.com/{username}",
+    "check_method": "GET",
+    "error_status_codes": [404],
+    "variations": true
+  },
+  "tiktok": {
+    "check_uri": "https://www.tiktok.com/@{username}",
+    "check_method": "GET",
+    "error_status_codes": [404, 302],
+    "variations": true
+  },
+  "youtube": {
+    "check_uri": "https://www.youtube.com/c/{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404],
+    "variations": true
+  },
+  "vimeo": {
+    "check_uri": "https://vimeo.com/{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404],
+    "variations": true
+  },
+  "twitch": {
+    "check_uri": "https://www.twitch.tv/{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "tumblr": {
+    "check_uri": "https://{username}.tumblr.com/",
+    "check_method": "HEAD",
+    "error_status_codes": [404],
+    "variations": true
+  },
+  "flickr": {
+    "check_uri": "https://www.flickr.com/people/{username}/",
+    "check_method": "GET",
+    "error_status_codes": [404],
+    "variations": true
+  },
+  "dribbble": {
+    "check_uri": "https://dribbble.com/{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404, 403],
+    "variations": true
+  },
+  "behance": {
+    "check_uri": "https://www.behance.net/{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "deviantart": {
+    "check_uri": "https://{username}.deviantart.com/",
+    "check_method": "HEAD",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "telegram": {
+    "check_uri": "https://t.me/{username}",
+    "check_method": "GET",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "linktr.ee": {
+    "check_uri": "https://linktr.ee/{username}",
+    "check_method": "GET",
+    "error_status_codes": [404],
+    "variations": true
+  },
+  "steam": {
+    "check_uri": "https://steamcommunity.com/id/{username}",
+    "check_method": "GET",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "patreon": {
+    "check_uri": "https://www.patreon.com/{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "bitbucket": {
+    "check_uri": "https://bitbucket.org/{username}/",
+    "check_method": "GET",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "keybase": {
+    "check_uri": "https://keybase.io/{username}",
+    "check_method": "GET",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "hackernews": {
+    "check_uri": "https://news.ycombinator.com/user?id={username}",
+    "check_method": "GET",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "spotify": {
+    "check_uri": "https://open.spotify.com/user/{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "mastodon": {
+    "check_uri": "https://mastodon.social/@{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "trello": {
+    "check_uri": "https://trello.com/{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404],
+    "variations": false
+  },
+  "500px": {
+    "check_uri": "https://500px.com/{username}",
+    "check_method": "HEAD",
+    "error_status_codes": [404],
+    "variations": false
+  }
 }

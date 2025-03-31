@@ -1,113 +1,134 @@
 """
-Pydantic models for the unve1ler OSINT tool
+Pydantic models for the IDCrawl Username Checking functionality
 """
 
-from typing import Dict, List, Optional, Any, Union
-from pydantic import BaseModel, Field, HttpUrl, validator
 import json
+import logging
 import os
 from pathlib import Path
+from typing import Dict, List, Optional, Any, Union
+from urllib.parse import urlparse
 
+try:
+    # For Pydantic v2
+    from pydantic import BaseModel, field_validator, model_validator, HttpUrl, ValidationError
+except ImportError:
+    # Fallback for Pydantic v1
+    from pydantic import BaseModel, validator as field_validator, root_validator as model_validator
+    from pydantic import AnyHttpUrl as HttpUrl, ValidationError
 
-class UsernameCheckConfig(BaseModel):
-    """Configuration for username checking"""
-    timeout: int = Field(10, ge=1, le=60, description="Request timeout in seconds")
-    max_concurrent_checks: int = Field(20, ge=1, le=100, description="Maximum number of concurrent checks")
-    error_delay: int = Field(2, ge=0, le=10, description="Delay between retries in seconds")
-    retry_attempts: int = Field(2, ge=0, le=5, description="Number of retry attempts")
-    verify_ssl: bool = Field(True, description="Verify SSL certificates")
-    user_agent: str = Field(..., description="User-Agent string to use for requests")
-    allowed_http_codes: List[int] = Field([200, 201, 202], description="HTTP codes that indicate success")
-    log_level: str = Field("INFO", description="Logging level")
+logger = logging.getLogger(__name__)
 
+# --- Configuration Models ---
 
-class IDCrawlIntegrationConfig(BaseModel):
-    """Configuration for IDCrawl integration"""
-    use_automation: bool = Field(True, description="Use browser automation for IDCrawl")
-    headless: bool = Field(True, description="Run browser in headless mode")
-    browser_type: str = Field("chromium", description="Browser type to use")
-    block_resources: bool = Field(True, description="Block unnecessary resources")
-    use_stealth: bool = Field(True, description="Use stealth techniques")
-    timeout: int = Field(60, ge=10, le=300, description="Browser timeout in seconds")
-    max_retry: int = Field(3, ge=0, le=5, description="Maximum number of retries")
-
+class IdcrawlSettings(BaseModel):
+    """Settings for the IDCrawl username checking functionality"""
+    
+    # Timeouts and concurrency
+    IDCRAWL_TIMEOUT_SITE: float = 10.0
+    IDCRAWL_CONCURRENCY_USER: int = 5  # Max concurrent site checks per username
+    IDCRAWL_CONCURRENCY_GLOBAL: int = 20  # Max concurrent username checks
+    IDCRAWL_RETRIES_SITE: int = 2  # Retries per site
+    
+    # User agent and proxy settings
+    USER_AGENTS: List[str] = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36"
+    ]
+    PROXY: Optional[str] = None  # Optional proxy in format "http://user:pass@host:port"
+    
+    # Files and paths
+    IDCRAWL_SITES_FILE: str = "sites.json"  # Path to the sites definition file
+    
+    # Browser automation settings
+    IDCRAWL_HEADLESS: bool = True  # Run browser automation in headless mode
+    
+    @field_validator('IDCRAWL_TIMEOUT_SITE')
+    def validate_timeout(cls, v):
+        if v <= 0:
+            raise ValueError("Timeout must be positive")
+        return v
+        
+    @field_validator('IDCRAWL_CONCURRENCY_USER', 'IDCRAWL_CONCURRENCY_GLOBAL')
+    def validate_concurrency(cls, v):
+        if v <= 0:
+            raise ValueError("Concurrency must be positive")
+        if v > 100:
+            logger.warning(f"High concurrency value: {v}")
+        return v
 
 class Config(BaseModel):
     """Main configuration model"""
-    username_check: UsernameCheckConfig
-    idcrawl_integration: IDCrawlIntegrationConfig
+    settings: IdcrawlSettings
 
+# --- Result Models ---
 
 class IdcrawlSiteResult(BaseModel):
-    """Result of a single site check"""
-    site_name: str = Field(..., description="Name of the site checked")
-    url_checked: HttpUrl = Field(..., description="URL that was checked")
-    found: bool = Field(False, description="Whether the profile was found")
-    status_code: Optional[int] = Field(None, description="HTTP status code received")
-    response_time: Optional[float] = Field(None, description="Response time in seconds")
-    error: Optional[str] = Field(None, description="Error message if check failed")
-    profile_url: Optional[str] = Field(None, description="URL of the found profile")
-    username_used: str = Field(..., description="Username used for the check")
-    confidence: float = Field(0.0, ge=0.0, le=1.0, description="Confidence score")
-    metadata: Dict[str, Any] = Field({}, description="Additional metadata")
-
-    @validator('confidence')
-    def check_confidence(cls, v):
-        """Ensure confidence is between 0 and 1"""
-        return max(0.0, min(1.0, v))
-
-
-class IdcrawlUserResult(BaseModel):
-    """Results of username checks across multiple sites"""
-    username: str = Field(..., description="Username that was checked")
-    variations_checked: List[str] = Field([], description="Username variations that were checked")
-    sites_checked: int = Field(0, description="Number of sites checked")
-    sites_with_profiles: int = Field(0, description="Number of sites where profiles were found")
-    execution_time: float = Field(0.0, description="Total execution time in seconds")
-    results: List[IdcrawlSiteResult] = Field([], description="Results for each site")
-    sites_with_errors: int = Field(0, description="Number of sites with errors")
-    highest_confidence: float = Field(0.0, description="Highest confidence score")
-    target_category: Optional[str] = Field(None, description="Target category if identified")
-    metadata: Dict[str, Any] = Field({}, description="Additional metadata")
-    additional_urls: List[str] = Field([], description="Additional URLs discovered")
-
-    def calculate_summary_stats(self):
-        """Calculate summary statistics based on results"""
-        self.sites_checked = len(self.results)
-        self.sites_with_profiles = sum(1 for r in self.results if r.found)
-        self.sites_with_errors = sum(1 for r in self.results if r.error is not None)
-        confidence_scores = [r.confidence for r in self.results if r.found]
-        self.highest_confidence = max(confidence_scores) if confidence_scores else 0.0
-
-
-def load_config() -> Config:
-    """Load configuration from config.json file"""
-    config_path = Path("config.json")
-    if not config_path.exists():
-        # Use default config if file doesn't exist
-        return Config(
-            username_check=UsernameCheckConfig(
-                timeout=10,
-                max_concurrent_checks=20,
-                error_delay=2,
-                retry_attempts=2,
-                verify_ssl=True,
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                allowed_http_codes=[200, 201, 202, 301, 302, 308],
-                log_level="INFO"
-            ),
-            idcrawl_integration=IDCrawlIntegrationConfig(
-                use_automation=True,
-                headless=True,
-                browser_type="chromium",
-                block_resources=True,
-                use_stealth=True,
-                timeout=60,
-                max_retry=3
-            )
-        )
+    """Result of checking a username on a single site"""
+    site_name: Optional[str] = None
+    url_found: Optional[str] = None  # URL where the profile was found
+    status: str  # "found", "not_found", or "error"
+    error_message: Optional[str] = None
+    http_status: Optional[int] = None
     
-    with open(config_path, "r") as f:
-        config_data = json.load(f)
+    @field_validator('status')
+    def validate_status(cls, v):
+        if v not in ["found", "not_found", "error"]:
+            raise ValueError(f"Invalid status: {v}")
+        return v
+        
+    @field_validator('url_found')
+    def validate_url(cls, v):
+        if v is not None:
+            try:
+                # Check if it's a valid URL
+                parsed = urlparse(v)
+                if not all([parsed.scheme, parsed.netloc]):
+                    raise ValueError(f"Invalid URL: {v}")
+            except Exception as e:
+                raise ValueError(f"Invalid URL ({str(e)}): {v}")
+        return v
+
+try:
+    # For Pydantic v2
+    from pydantic import RootModel
     
-    return Config(**config_data)
+    class IdcrawlUserResult(RootModel):
+        """Results of checking a username across multiple sites"""
+        root: Dict[str, IdcrawlSiteResult]
+except ImportError:
+    # Fallback for Pydantic v1
+    class IdcrawlUserResult(BaseModel):
+        """Results of checking a username across multiple sites"""
+        __root__: Dict[str, IdcrawlSiteResult]
+
+# --- Helper Functions ---
+
+def load_config(config_path: str = "config.json") -> Config:
+    """Load configuration from a JSON file"""
+    try:
+        path_obj = Path(config_path)
+        if not path_obj.exists():
+            logger.warning(f"Config file not found: {config_path}")
+            # Create default config
+            default_config = Config(settings=IdcrawlSettings())
+            with open(config_path, 'w') as f:
+                if hasattr(default_config, 'model_dump'):
+                    json.dump(default_config.model_dump(), f, indent=2)
+                else:
+                    json.dump(default_config.dict(), f, indent=2)
+            logger.info(f"Created default config file: {config_path}")
+            return default_config
+            
+        with open(config_path, 'r') as f:
+            config_data = json.load(f)
+        
+        # Validate and return config
+        config = Config(**config_data)
+        logger.info(f"Loaded configuration from {config_path}")
+        return config
+    except Exception as e:
+        logger.error(f"Error loading config: {e}", exc_info=True)
+        # Return default config
+        return Config(settings=IdcrawlSettings())

@@ -1,332 +1,253 @@
-"""
-OSINT modules for username checking across multiple sites
-"""
+# osint_modules.py - Refined Orchestrator for Idcrawl/Sherlock
 
 import asyncio
-import time
-import logging
 import json
-import sys
-from typing import Dict, List, Optional, Any, Tuple, Set
-from pathlib import Path
+import logging
 import random
-import aiohttp
-from aiohttp import ClientSession, ClientTimeout, ClientError
-from aiohttp.client_exceptions import ClientConnectorError, ServerTimeoutError
-import traceback
+import re
+import time
+from typing import Dict, List, Optional, Any, Union
+from urllib.parse import urlparse  # Needed for Sherlock helper
 
-from models import load_config, IdcrawlSiteResult, IdcrawlUserResult
+# --- Import Scraper / Fallback Logic ---
+CHECK_FUNCTION = None
+CHECK_TYPE = "None"
+USERNAME_CHECK_ENABLED = False
+logger = logging.getLogger(__name__)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("osint_modules")
-
-# Load configuration
-CONFIG = load_config()
-
-# Import idcrawl_scraper asynchronously to avoid startup delays
-idcrawl_scraper = None
 try:
-    from idcrawl_scraper import check_username_on_site_async
-    logger.info("Successfully imported idcrawl_scraper module")
+    # Try importing your custom scraper first
+    from idcrawl_scraper import check_username_on_sites_async, load_sites_from_file
+    CHECK_FUNCTION = check_username_on_sites_async
+    CHECK_TYPE = "Idcrawl"
+    USERNAME_CHECK_ENABLED = True
+    logger.info("Using custom 'idcrawl_scraper' for username checks.")
 except ImportError:
-    logger.warning("Could not import idcrawl_scraper, falling back to default implementation")
-
-
-async def default_check_username_on_site_async(
-    username: str, 
-    site_name: str, 
-    url_format: str, 
-    session: ClientSession, 
-    **kwargs
-) -> IdcrawlSiteResult:
-    """
-    Default implementation of check_username_on_site_async if the idcrawl_scraper module is not available.
-    This is a basic implementation that just checks if the URL exists.
-    
-    Args:
-        username: Username to check
-        site_name: Name of the site
-        url_format: URL format string with {} placeholder for username
-        session: aiohttp ClientSession to use
-        **kwargs: Additional arguments
-        
-    Returns:
-        IdcrawlSiteResult object with check results
-    """
-    start_time = time.time()
-    url = url_format.format(username=username)
-    result = IdcrawlSiteResult(
-        site_name=site_name,
-        url_checked=url,
-        found=False,
-        username_used=username
-    )
-    
-    timeout = ClientTimeout(total=CONFIG.username_check.timeout)
-    
+    logger.warning("Could not import from idcrawl_scraper.py. Attempting Sherlock fallback...")
+    # Fallback to Sherlock if idcrawl_scraper not found
     try:
-        headers = {"User-Agent": CONFIG.username_check.user_agent}
-        async with session.get(
-            url, 
-            timeout=timeout, 
-            headers=headers, 
-            ssl=CONFIG.username_check.verify_ssl
-        ) as response:
-            result.status_code = response.status
-            result.found = response.status in CONFIG.username_check.allowed_http_codes
-            if result.found:
-                result.profile_url = url
-                result.confidence = 0.8  # Basic confidence score for successful request
-            
-            # Try to read some of the response for better detection
-            if result.found:
-                try:
-                    content = await response.text(errors='ignore')
-                    content_sample = content[:1000].lower()
-                    
-                    # Look for common error phrases that might indicate false positives
-                    error_phrases = [
-                        "not found", "doesn't exist", "no user", "page not found",
-                        "404", "user does not exist", "user not found", "no account found"
-                    ]
-                    for phrase in error_phrases:
-                        if phrase in content_sample:
-                            result.found = False
-                            result.error = f"Found error phrase: '{phrase}'"
-                            result.confidence = 0
-                            break
-                            
-                    # If we still think we found it, check for username in content
-                    if result.found and username.lower() in content_sample:
-                        result.confidence = 0.9  # Higher confidence if username is in the page
-                        
-                except Exception as e:
-                    logger.debug(f"Error reading content for {site_name}: {str(e)}")
-    
-    except ClientConnectorError:
-        result.error = "Connection error"
-    except ServerTimeoutError:
-        result.error = "Timeout"
-    except asyncio.TimeoutError:
-        result.error = "Timeout"
-    except ClientError as e:
-        result.error = f"Client error: {str(e)}"
-    except Exception as e:
-        result.error = f"Error: {str(e)}"
-    
-    end_time = time.time()
-    result.response_time = end_time - start_time
-    
-    return result
+        # Check if sherlock command exists? Assume installed if package listed.
+        async def _execute_sherlock_for_user(username: str, timeout: float, **kwargs) -> Dict[str, Any]:
+             """Helper to execute sherlock and return structured dict matching IdcrawlUserResult.__root__."""
+             # Ensure username is safe for shell command (basic check)
+             if not re.match(r'^[a-zA-Z0-9._-]+$', username): return {"error": {"status": "error", "error_message": "Invalid username format for Sherlock"}}
+
+             command_parts = ["sherlock", "--timeout", str(round(timeout, 1)), "--print-found", "--no-color", username]
+             logger.debug(f"Executing Sherlock command: {' '.join(command_parts)}")
+             proc = await asyncio.create_subprocess_exec(*command_parts, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+             try: stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout + 5.0)
+             except asyncio.TimeoutError:
+                 logger.warning(f"Sherlock process timed out externally for username '{username}'")
+                 try: proc.terminate(); await asyncio.wait_for(proc.wait(), 1.0)
+                 except: proc.kill(); await proc.wait()
+                 return {"sherlock_timeout": {"status": "error", "error_message": "Sherlock process timed out"}}
+
+             stdout_str = stdout.decode('utf-8', 'replace').strip()
+             stderr_str = stderr.decode('utf-8', 'replace').strip()
+             results_dict: Dict[str, Dict] = {}  # Stores site_name -> IdcrawlSiteResult compatible dict
+
+             if proc.returncode != 0: logger.warning(f"Sherlock for '{username}' exited {proc.returncode}. Stderr: {stderr_str}")
+             elif stderr_str: logger.warning(f"Sherlock stderr for '{username}': {stderr_str}")
+
+             found_urls = [line.strip() for line in stdout_str.splitlines() if line.strip().startswith('http')]
+
+             if not found_urls:
+                 status = "error" if proc.returncode != 0 else "not_found"
+                 err_msg = f"Sherlock failed (code {proc.returncode})" if proc.returncode != 0 else None
+                 # Use Pydantic model to create the dict for consistency
+                 results_dict["sherlock_status"] = {"site_name": "Sherlock Status", "status": status, "error_message": err_msg}
+             else:
+                 for url in found_urls:
+                     try: site_name = urlparse(url).netloc.replace('www.', '').split('.')[0]
+                     except: site_name = url  # fallback
+                     results_dict[site_name] = {"site_name": site_name, "status": "found", "url_found": url}
+             return results_dict  # Return dict matching structure
+
+        CHECK_FUNCTION = _execute_sherlock_for_user
+        CHECK_TYPE = "Sherlock"
+        USERNAME_CHECK_ENABLED = True
+        logger.info("Using 'sherlock-project' fallback for username checks.")
+
+    except Exception as sherlock_err:
+         logger.error(f"Sherlock fallback setup failed: {sherlock_err}. Username checks disabled.")
+         USERNAME_CHECK_ENABLED = False
+         # Define dummy CHECK_FUNCTION if everything fails
+         async def check_username_on_sites_async_dummy(*args, **kwargs): return {"error": {"status": "error", "error_message": "Username checking unavailable"}}
+         CHECK_FUNCTION = check_username_on_sites_async_dummy
+         CHECK_TYPE = "None"
 
 
-async def load_sites_data() -> Dict[str, str]:
-    """
-    Load site data from sites.json or fallback to default sites if not available
-    
-    Returns:
-        Dictionary of site names and URL formats
-    """
-    sites_path = Path("sites.json")
-    
-    # Default fallback sites if no sites.json found
-    default_sites = {
-        "Instagram": "https://www.instagram.com/{username}/",
-        "Twitter": "https://twitter.com/{username}",
-        "Facebook": "https://www.facebook.com/{username}",
-        "LinkedIn": "https://www.linkedin.com/in/{username}/",
-        "GitHub": "https://github.com/{username}",
-        "Reddit": "https://www.reddit.com/user/{username}",
-        "YouTube": "https://www.youtube.com/user/{username}",
-        "Pinterest": "https://www.pinterest.com/{username}/",
-        "TikTok": "https://www.tiktok.com/@{username}"
-    }
-    
-    if not sites_path.exists():
-        logger.warning("sites.json not found, using default sites")
-        return default_sites
-    
-    try:
-        with open(sites_path, "r") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Error loading sites.json: {str(e)}")
-        return default_sites
+# Import shared config
+try:
+    from models import load_config, IdcrawlSiteResult, IdcrawlUserResult, ValidationError
+    CONFIG = load_config()
+    if CONFIG is None: raise ImportError("CONFIG is None")
+except ImportError:
+    logging.getLogger(__name__).critical("Could not import CONFIG from models.")
+    CONFIG = None
 
+# --- Username Validation Pattern ---
+USERNAME_VALIDATION_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{1,30}[a-zA-Z0-9]$")
 
-def generate_username_variations(username: str) -> List[str]:
-    """
-    Generate variations of a username
-    
-    Args:
-        username: Base username
-        
-    Returns:
-        List of username variations
-    """
-    variations = [username]  # Original username
-    
-    # Add basic variations
-    variations.extend([
-        username.lower(),
-        username.upper(),
-        username.capitalize(),
-        f"{username}1",
-        f"{username}123",
-        f"{username}_",
-        f"_{username}",
-        f"{username}_",
-        f"{username.replace(' ', '')}",
-        f"{username.replace(' ', '_')}",
-        f"{username.replace(' ', '-')}",
-        f"{username.replace('.', '_')}",
-        f"{username.replace('_', '.')}",
-        f"{username.replace('-', '_')}",
-    ])
-    
-    # Remove duplicates while maintaining order
-    seen = set()
-    unique_variations = []
-    for variation in variations:
-        if variation not in seen:
-            seen.add(variation)
-            unique_variations.append(variation)
-    
-    return unique_variations
-
+# --- Username Checking Orchestration ---
 
 async def run_username_checks_async(
-    username: str,
-    variations: bool = True,
-    max_sites: Optional[int] = None,
-    check_function = None
-) -> IdcrawlUserResult:
+    usernames: List[str],
+    session: 'aiohttp.ClientSession'  # Session might be needed by custom scraper
+    ) -> Dict[str, Any]:  # Return type uses Pydantic model
     """
-    Check username across multiple sites asynchronously
-    
-    Args:
-        username: Username to check
-        variations: Whether to check variations of the username
-        max_sites: Maximum number of sites to check (None for all)
-        check_function: Custom function to check username on a site
-        
-    Returns:
-        IdcrawlUserResult with the results
+    Orchestrates asynchronous username checks using the configured method.
     """
     start_time = time.time()
+    # Create error result structure based on Pydantic model
+    error_site_result = {"status": "error", "error_message": "Username checking feature disabled"}
     
-    # Determine which check function to use
-    site_check_function = check_function
-    if site_check_function is None:
-        # Import the module function or use default
-        if 'check_username_on_site_async' in globals() and globals()['check_username_on_site_async']:
-            site_check_function = globals()['check_username_on_site_async']
-        else:
-            site_check_function = default_check_username_on_site_async
-            logger.warning("Using default username check function")
-    
-    # Generate username variations if requested
-    username_variations = [username]
-    if variations:
-        username_variations = generate_username_variations(username)
-        logger.info(f"Generated {len(username_variations)} username variations")
-    
-    # Load sites
-    sites = await load_sites_data()
-    if max_sites:
-        # Prioritize most popular sites if max_sites is limited
-        popular_sites = [
-            "Instagram", "Twitter", "Facebook", "LinkedIn", "TikTok", 
-            "GitHub", "YouTube", "Reddit", "Pinterest"
-        ]
-        
-        # Combine popular sites with random selection from others
-        selected_popular = [s for s in popular_sites if s in sites]
-        other_sites = [s for s in sites if s not in popular_sites]
-        
-        # Shuffle other sites for randomness
-        random.shuffle(other_sites)
-        
-        # Combine popular sites with some others, up to max_sites
-        remaining = max_sites - len(selected_popular)
-        if remaining > 0:
-            selected_sites = {s: sites[s] for s in selected_popular}
-            selected_sites.update({s: sites[s] for s in other_sites[:remaining]})
-            sites = selected_sites
-    
-    logger.info(f"Checking username '{username}' on {len(sites)} sites")
+    try:
+        # Create error user result
+        try:
+            # Pydantic v2
+            error_user_result = {"root": {"error": error_site_result}}
+        except:
+            # Pydantic v1
+            error_user_result = {"__root__": {"error": error_site_result}}
+    except:
+        # Fallback to simple dict if Pydantic fails
+        error_user_result = {"error": error_site_result}
 
-    # Create a result object
-    result = IdcrawlUserResult(
-        username=username,
-        variations_checked=username_variations
-    )
-    
-    # Execute checks
-    async with aiohttp.ClientSession() as session:
-        sem = asyncio.Semaphore(CONFIG.username_check.max_concurrent_checks)
+    if not USERNAME_CHECK_ENABLED:
+        return {u: error_user_result for u in usernames}
+    if not usernames: return {}
+    if CONFIG is None or not CONFIG.settings:
+        logger.error("Username check cannot run: Configuration not loaded.")
+        error_site_result["error_message"] = "Configuration error"
+        return {u: error_user_result for u in usernames}
+
+    check_results: Dict[str, Any] = {}
+    settings = CONFIG.settings
+    timeout = float(settings.IDCRAWL_TIMEOUT_SITE)
+    concurrency_user = int(settings.IDCRAWL_CONCURRENCY_USER)
+    global_concurrency = int(settings.IDCRAWL_CONCURRENCY_GLOBAL)
+    sites_file = settings.IDCRAWL_SITES_FILE
+
+    # --- Filter and validate usernames ---
+    valid_usernames = set()
+    for u in usernames:
+        if isinstance(u, str) and USERNAME_VALIDATION_PATTERN.match(u): valid_usernames.add(u)
+        else: logger.debug(f"Skipping invalid username for {CHECK_TYPE}: '{u}'")
+    if not valid_usernames: return {}
+    unique_usernames = sorted(list(valid_usernames))
+
+    logger.info(f"Starting {CHECK_TYPE} checks for {len(unique_usernames)} usernames (Global Concurrency: {global_concurrency})...")
+
+    # --- Create Semaphore & Tasks ---
+    semaphore = asyncio.Semaphore(global_concurrency)
+    tasks = [
+        asyncio.create_task(
+            _run_single_user_check_with_semaphore(
+                semaphore=semaphore,
+                username=username,
+                session=session,
+                timeout=timeout,
+                concurrency_limit=concurrency_user,  # Pass relevant args
+                sites_file=sites_file  # Pass relevant args
+            ),
+            name=f"{CHECK_TYPE}-{username}"
+        ) for username in unique_usernames
+    ]
+
+    # --- Gather and Process Results ---
+    results_list = await asyncio.gather(*tasks, return_exceptions=True)
+    total_sites_found_overall = 0
+    total_errors = 0
+
+    for i, result_data in enumerate(results_list):
+        username = unique_usernames[i]
+        user_result_dict = {}  # This will become the data for the Pydantic model
         
-        async def check_site(site_name, url_format):
-            async with sem:
-                # Check the original username first
-                try:
-                    site_result = await site_check_function(
-                        username=username,
-                        site_name=site_name,
-                        url_format=url_format,
-                        session=session
-                    )
-                    result.results.append(site_result)
-                except Exception as e:
-                    logger.error(f"Error checking {site_name}: {str(e)}")
-                    logger.debug(traceback.format_exc())
-                    error_result = IdcrawlSiteResult(
-                        site_name=site_name,
-                        url_checked=url_format.format(username=username),
-                        found=False,
-                        error=f"Exception: {str(e)}",
-                        username_used=username
-                    )
-                    result.results.append(error_result)
-                
-                # If not found and variations are enabled, check variations
-                if variations and not result.results[-1].found and len(username_variations) > 1:
-                    # Only check a couple variations to avoid excessive requests
-                    for variation in username_variations[1:3]:  # Skip the original username
-                        if variation == username:
-                            continue
-                            
-                        try:
-                            var_result = await site_check_function(
-                                username=variation,
-                                site_name=site_name,
-                                url_format=url_format,
-                                session=session
-                            )
-                            if var_result.found:
-                                result.results.append(var_result)
-                                break  # Stop checking further variations if one is found
-                        except Exception as e:
-                            logger.debug(f"Error checking variation {variation} on {site_name}: {str(e)}")
-        
-        # Run checks concurrently
-        tasks = [check_site(site_name, url_format) for site_name, url_format in sites.items()]
-        await asyncio.gather(*tasks)
-    
-    # Calculate summary statistics
-    result.calculate_summary_stats()
-    
-    # Record execution time
-    end_time = time.time()
-    result.execution_time = end_time - start_time
-    
-    logger.info(
-        f"Completed username checks for '{username}' on {result.sites_checked} sites. " 
-        f"Found {result.sites_with_profiles} profiles in {result.execution_time:.2f} seconds."
-    )
-    
-    return result
+        if isinstance(result_data, Exception):
+            logger.error(f"{CHECK_TYPE} check task failed unexpectedly for '{username}': {result_data}", exc_info=result_data)
+            # Set up error data
+            user_result_dict = {"task_error": {"status": "error", "error_message": f"Task execution failed: {type(result_data).__name__}"}}
+            total_errors += 1
+        elif isinstance(result_data, dict):
+            user_result_dict = result_data
+            # Calculate stats based on the returned dict structure
+            if "error" in user_result_dict:  # Check for top-level error key
+                 error_val = user_result_dict["error"]
+                 # Check if the error value itself indicates an error status
+                 if isinstance(error_val, dict) and error_val.get("status") == "error":
+                     total_errors += 1
+            else:
+                 # Count found sites only if no top-level error
+                 found_count = len([site for site, data in user_result_dict.items() 
+                                   if isinstance(data, dict) and data.get('status') == 'found'])
+                 total_sites_found_overall += found_count
+                 logger.info(f"{CHECK_TYPE} check for '{username}' completed. Found on ~{found_count} sites.")
+        else:  # Unexpected type
+            logger.error(f"Unexpected result type for {CHECK_TYPE} check on '{username}': {type(result_data)}")
+            user_result_dict = {"internal_error": {"status": "error", "error_message": "Unexpected result format"}}
+            total_errors += 1
+
+        # --- Validate and store using Pydantic model ---
+        try:
+            # Ensure the structure matches the expected model format
+            validated_site_results = {}
+            for site_name, site_data in user_result_dict.items():
+                if isinstance(site_data, dict):
+                    try:  # Validate each site result individually
+                        validated_site_results[site_name] = site_data  # Simply store valid dicts
+                    except Exception as site_val_err:
+                        logger.warning(f"Site result validation failed for {username}/{site_name}: {site_val_err}")
+                        validated_site_results[site_name] = {"status": "error", "error_message": "Invalid site result format"}
+                else:  # Handle cases where a value isn't a dict
+                    validated_site_results[site_name] = {"status": "error", "error_message": "Invalid site data type"}
+
+            # Store results for this username
+            # Try both v1 and v2 Pydantic formats
+            try:
+                # Pydantic v2
+                check_results[username] = {"root": validated_site_results}
+            except:
+                # Pydantic v1
+                check_results[username] = {"__root__": validated_site_results}
+
+        except Exception as e:  # Catch any validation error
+            logger.warning(f"Overall result validation failed for '{username}': {e}. Storing raw result with error.")
+            # Store minimal error structure compliant with the model
+            check_results[username] = {"root": {"validation_error": {"status": "error", "error_message": "Result format invalid"}}}
+            total_errors += 1
+
+    elapsed = time.time() - start_time
+    logger.info(f"{CHECK_TYPE} checks finished for {len(unique_usernames)} usernames in {elapsed:.2f}s. "
+                f"Total sites found: {total_sites_found_overall}. Total errors/issues: {total_errors}.")
+
+    return check_results
+
+
+async def _run_single_user_check_with_semaphore(semaphore: asyncio.Semaphore, **kwargs) -> Dict[str, Any]:
+    """Acquires semaphore, runs the check for one user, releases semaphore."""
+    username = kwargs.get("username", "unknown")
+    logger.debug(f"Waiting for semaphore for {CHECK_TYPE} check on '{username}'...")
+    async with semaphore:
+        logger.debug(f"Acquired semaphore for '{username}'. Running {CHECK_TYPE} check...")
+        try:
+            # Call the selected CHECK_FUNCTION
+            # Prepare args based on CHECK_TYPE to avoid passing unnecessary ones
+            func_kwargs = {"username": username, "timeout": kwargs.get("timeout")}
+            if CHECK_TYPE == "Idcrawl":
+                 func_kwargs["session"] = kwargs.get("session")
+                 func_kwargs["concurrency_limit"] = kwargs.get("concurrency_limit")
+                 func_kwargs["user_agents"] = CONFIG.settings.USER_AGENTS if CONFIG and CONFIG.settings else None
+                 func_kwargs["proxy"] = str(CONFIG.settings.PROXY) if CONFIG and CONFIG.settings and CONFIG.settings.PROXY else None
+                 func_kwargs["sites_file"] = kwargs.get("sites_file")
+            # Sherlock fallback (_execute_sherlock_for_user) only needs username and timeout
+
+            result_dict = await CHECK_FUNCTION(**func_kwargs)
+            # Ensure return is always a dict
+            return result_dict if isinstance(result_dict, dict) else {"error": {"status": "error", "error_message": "Check function returned non-dict"}}
+        except Exception as e:
+             logger.error(f"Exception during {CHECK_TYPE} check for '{username}': {e}", exc_info=True)
+             # Return structure matching IdcrawlUserResult.__root__
+             return {"error": {"status": "error", "error_message": f"Check function failed: {type(e).__name__}"}}
+        finally:
+             logger.debug(f"Released semaphore for '{username}'.")

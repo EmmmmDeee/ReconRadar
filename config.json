@@ -1,21 +1,15 @@
 {
-  "username_check": {
-    "timeout": 10,
-    "max_concurrent_checks": 20,
-    "error_delay": 2,
-    "retry_attempts": 2,
-    "verify_ssl": true,
-    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "allowed_http_codes": [200, 201, 202, 301, 302, 308],
-    "log_level": "INFO"
-  },
-  "idcrawl_integration": {
-    "use_automation": true,
-    "headless": true,
-    "browser_type": "chromium",
-    "block_resources": true,
-    "use_stealth": true,
-    "timeout": 60,
-    "max_retry": 3
+  "settings": {
+    "IDCRAWL_TIMEOUT_SITE": 5.0,
+    "IDCRAWL_CONCURRENCY_USER": 5,
+    "IDCRAWL_CONCURRENCY_GLOBAL": 20,
+    "IDCRAWL_RETRIES_SITE": 2,
+    "USER_AGENTS": [
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36"
+    ],
+    "IDCRAWL_SITES_FILE": "sites.json",
+    "IDCRAWL_HEADLESS": true
   }
 }

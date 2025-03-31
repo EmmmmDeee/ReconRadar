@@ -1,922 +1,696 @@
-"""
-IdCrawl Integration Module for unve1ler
+# idcrawl_scraper.py - Advanced username checker leveraging idcrawl.com automation
 
-This module provides functionality to scrape and extract data from idcrawl.com,
-leveraging their comprehensive people search capabilities to enhance our own results.
-
-It supports two methods:
-1. Direct HTTP requests (basic, subject to CAPTCHA)
-2. Browser automation via Playwright (advanced, more reliable)
-"""
-
-import logging
-import json
-import re
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin, quote_plus
-import os
 import asyncio
-import sys
+import json
+import logging
+import os
+import random
+import re
 import time
-import hashlib
 from pathlib import Path
+from typing import Dict, List, Optional, Any, Set, Tuple, Union
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# --- Setup Logging ---
+logger = logging.getLogger("idcrawl_scraper")
+logger.setLevel(logging.INFO)
 
-# Check if the automation dependencies are available
-AUTOMATION_AVAILABLE = False
+# --- Constants ---
+DEFAULT_SITES_FILE = "sites.json"
+DEFAULT_TIMEOUT = 10.0  # Default timeout in seconds
+DEFAULT_CONCURRENCY = 5  # Default concurrency limit
+DEFAULT_MAX_RETRIES = 2  # Default number of retries
+DEFAULT_RETRY_DELAY = 1.0  # Default delay between retries (seconds)
+
+# --- Optional Dependencies Check ---
+PLAYWRIGHT_AVAILABLE = False
+PLAYWRIGHT_STEALTH_AVAILABLE = False
+IDCRAWL_AUTOMATION_AVAILABLE = False
+AUTOMATION_AVAILABLE = False  # Alias for compatibility
+AUTOMATION_SCRIPT_AVAILABLE = False  # Alias for compatibility
+
 try:
-    import playwright
-    from tenacity import retry
-    AUTOMATION_AVAILABLE = True
+    import aiohttp
+    from aiohttp.client_exceptions import ClientError, ClientResponseError, ClientConnectionError, ServerDisconnectedError
+    AIOHTTP_AVAILABLE = True
+except ImportError:
+    logger.warning("aiohttp not available. This is required for HTTP operations.")
+    AIOHTTP_AVAILABLE = False
+
+try:
+    from playwright.async_api import async_playwright
+    PLAYWRIGHT_AVAILABLE = True
     logger.info("Playwright automation dependencies available")
 except ImportError:
-    logger.warning("Playwright automation dependencies not available. "
-                  "For enhanced IdCrawl access, install with: "
-                  "pip install playwright playwright-stealth tenacity")
-    
-# Import our custom automation module if it exists
+    logger.warning("Playwright not available. Some features will be disabled.")
+
+if PLAYWRIGHT_AVAILABLE:
+    try:
+        import playwright_stealth
+        PLAYWRIGHT_STEALTH_AVAILABLE = True
+        logger.debug("Playwright-stealth module available for enhanced automation")
+    except ImportError:
+        logger.warning("Playwright-stealth not available. Stealth automation features disabled.")
+
+# Try to import the IdCrawl automation module
 try:
-    from idcrawl_automation import perform_search
-    logger.info("IdCrawl automation module imported successfully")
-    AUTOMATION_SCRIPT_AVAILABLE = True
+    if PLAYWRIGHT_AVAILABLE:
+        from idcrawl_automation import perform_search
+        IDCRAWL_AUTOMATION_AVAILABLE = True
+        AUTOMATION_AVAILABLE = True  # Alias for compatibility
+        AUTOMATION_SCRIPT_AVAILABLE = True  # Alias for compatibility
+        logger.info("IdCrawl automation module imported successfully")
 except ImportError:
-    logger.warning("IdCrawl automation script not found")
-    AUTOMATION_SCRIPT_AVAILABLE = False
+    logger.warning("IdCrawl automation module not available. Direct IdCrawl automation disabled.")
+
+# --- Helper Functions ---
+
+def load_sites_from_file(filename: str = DEFAULT_SITES_FILE) -> Dict[str, Any]:
+    """
+    Load site definitions from a JSON file.
     
-    # Define a dummy function to avoid errors if automation is not available
-    async def perform_search(*args, **kwargs):
-        """Dummy function when the real automation script is not available"""
-        logger.error("perform_search called but automation script is not available")
-        return {
-            "metadata": {
-                "success": False,
-                "error": "Automation script not available",
-                "captcha_detected": False
+    Args:
+        filename: Path to the JSON file containing site definitions
+        
+    Returns:
+        Dictionary of site definitions
+    """
+    try:
+        if not os.path.exists(filename):
+            logger.warning(f"Sites file not found: {filename}")
+            # Create a minimal default sites file
+            default_sites = {
+                "twitter": {
+                    "check_uri": "https://twitter.com/{username}",
+                    "check_method": "HEAD",
+                    "error_status_codes": [404, 400, 401, 410, 403],
+                    "variations": True
+                },
+                "instagram": {
+                    "check_uri": "https://www.instagram.com/{username}/",
+                    "check_method": "HEAD",
+                    "error_status_codes": [404, 204],
+                    "variations": True
+                },
+                "facebook": {
+                    "check_uri": "https://www.facebook.com/{username}",
+                    "check_method": "HEAD",
+                    "error_status_codes": [404, 302],
+                    "variations": True
+                },
+                "github": {
+                    "check_uri": "https://github.com/{username}",
+                    "check_method": "GET",
+                    "error_status_codes": [404],
+                    "variations": False
+                },
+                "reddit": {
+                    "check_uri": "https://www.reddit.com/user/{username}/",
+                    "check_method": "GET",
+                    "error_status_codes": [404, 302],
+                    "variations": False,
+                    "headers": {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                    }
+                }
             }
+            
+            with open(filename, 'w') as f:
+                json.dump(default_sites, f, indent=2)
+            logger.info(f"Created default sites file: {filename}")
+            return default_sites
+        
+        with open(filename, 'r') as f:
+            sites_data = json.load(f)
+        
+        logger.info(f"Loaded {len(sites_data)} site definitions from {filename}")
+        return sites_data
+    except Exception as e:
+        logger.error(f"Error loading sites file: {e}", exc_info=True)
+        # Return minimal set of sites if file can't be loaded
+        return {
+            "twitter": {"check_uri": "https://twitter.com/{username}", "error_status_codes": [404]},
+            "github": {"check_uri": "https://github.com/{username}", "error_status_codes": [404]}
         }
 
-class IdCrawlScraper:
-    """Class for scraping and extracting data from idcrawl.com"""
+
+def generate_username_variations(username: str) -> List[str]:
+    """
+    Generate common variations of a username.
     
-    def __init__(self, user_agent=None, timeout=10):
-        """
-        Initialize the IdCrawl scraper with custom user agent and timeout
+    Args:
+        username: Base username to generate variations for
         
-        Args:
-            user_agent (str, optional): Custom user agent string
-            timeout (int): Request timeout in seconds
-        """
-        self.base_url = "https://www.idcrawl.com"
-        self.search_url = urljoin(self.base_url, "/search")
-        self.timeout = timeout
-        
-        # Use a browser-like user agent to avoid detection
-        self.user_agent = user_agent or (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        )
-        
-        # Set up session with appropriate headers
-        self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": self.user_agent,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "DNT": "1",  # Do Not Track
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Cache-Control": "max-age=0"
-        })
+    Returns:
+        List of username variations
+    """
+    # Use list comprehension for efficiency
+    variations = []
     
-    def search_username(self, username):
-        """
-        Search for a username on idcrawl.com
+    # If the username contains spaces, treat it as a potential full name
+    if ' ' in username:
+        parts = username.split()
+        if len(parts) == 2:  # First and last name
+            first, last = parts
+            variations.extend([
+                first.lower() + last.lower(),
+                first.lower() + '.' + last.lower(),
+                first.lower() + '_' + last.lower(),
+                first.lower() + '-' + last.lower(),
+                first[0].lower() + last.lower(),
+                last.lower() + first.lower(),
+                last.lower() + '.' + first.lower(),
+                last.lower() + '_' + first.lower(),
+                last.lower() + '-' + first.lower()
+            ])
+    
+    # Common username variations
+    variations.extend([
+        username,
+        username.lower(),
+        username.upper(),
+        "real" + username,
+        "the" + username,
+        username + "1",
+        username + "123",
+        username + "_official",
+    ])
+    
+    # Remove duplicates while maintaining order (use dict.fromkeys trick)
+    return list(dict.fromkeys(variations))
+
+
+# --- Main Username Checking Function ---
+
+async def check_username_on_sites_async(
+    username: str,
+    session: aiohttp.ClientSession = None,
+    sites_file: str = DEFAULT_SITES_FILE,
+    timeout: float = DEFAULT_TIMEOUT,
+    concurrency_limit: int = DEFAULT_CONCURRENCY,
+    user_agents: List[str] = None,
+    proxy: Optional[str] = None,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    retry_delay: float = DEFAULT_RETRY_DELAY,
+    generate_variations: bool = True
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Check if a username exists on various sites.
+    
+    Args:
+        username: Username to check
+        session: aiohttp ClientSession to use (created if None)
+        sites_file: Path to JSON file containing site definitions
+        timeout: Request timeout in seconds
+        concurrency_limit: Maximum concurrent requests
+        user_agents: List of user agents to rotate through
+        proxy: Optional proxy server URL (http://user:pass@host:port)
+        max_retries: Maximum number of retries for failed requests
+        retry_delay: Delay between retries in seconds
+        generate_variations: Whether to generate variations of the username
         
-        Args:
-            username (str): Username to search for
-            
-        Returns:
-            dict: Structured results from idcrawl.com
-        """
-        logger.info(f"Searching idcrawl.com for username: {username}")
+    Returns:
+        Dictionary of site names and results
+    """
+    if not AIOHTTP_AVAILABLE:
+        return {"error": {
+            "status": "error", 
+            "error_message": "aiohttp library not available"
+        }}
+    
+    if not username:
+        return {"error": {
+            "status": "error", 
+            "error_message": "Empty username provided"
+        }}
         
+    # Try the IdCrawl automated approach if available
+    if IDCRAWL_AUTOMATION_AVAILABLE and PLAYWRIGHT_AVAILABLE:
         try:
-            # First, visit the homepage to get any necessary cookies
-            self.session.get(self.base_url, timeout=self.timeout)
-            
-            # Use query parameters in the URL for a GET request instead of POST
-            search_url = urljoin(self.base_url, f"/u/{quote_plus(username)}")
-            
-            # Set up headers for a regular web browser GET request
-            headers = {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Referer": self.base_url
-            }
-            
-            # Perform the search request as GET
-            response = self.session.get(
-                search_url, 
-                headers=headers,
-                timeout=self.timeout
+            idcrawl_results = await _check_with_idcrawl_automation(
+                username, 
+                timeout=timeout, 
+                proxy=proxy, 
+                user_agent=random.choice(user_agents) if user_agents else None
             )
-            response.raise_for_status()
-            
-            # Parse results
-            return self._parse_search_results(response.text, username)
-        except requests.RequestException as e:
-            error_message = str(e)
-            logger.error(f"Error searching idcrawl.com: {error_message}")
-            
-            # Check if this is a CAPTCHA challenge (HTTP 405 with specific WAF action)
-            if "405" in error_message:
-                captcha_message = ("IdCrawl.com requires human verification (CAPTCHA). "
-                                  "Direct scraping is not possible due to bot protection. "
-                                  "Please consider using alternative sources or manual verification.")
-                logger.warning(captcha_message)
-                return {
-                    "success": False,
-                    "error": captcha_message,
-                    "requires_captcha": True,
-                    "profiles": {},
-                    "platform_metadata": {},
-                    "image_metadata": None
-                }
-            else:
-                return {
-                    "success": False,
-                    "error": error_message,
-                    "profiles": {},
-                    "platform_metadata": {},
-                    "image_metadata": None
-                }
-    
-    def search_person(self, full_name=None, location=None):
-        """
-        Search for a person by name and optional location on idcrawl.com
-        
-        Args:
-            full_name (str): Person's full name
-            location (str, optional): Location for filtering results
-            
-        Returns:
-            dict: Structured results from idcrawl.com
-        """
-        if not full_name:
-            return {"success": False, "error": "Full name is required"}
-        
-        logger.info(f"Searching idcrawl.com for person: {full_name}" + 
-                   (f" in {location}" if location else ""))
-        
-        try:
-            # First, visit the homepage to get any necessary cookies
-            self.session.get(self.base_url, timeout=self.timeout)
-            
-            # Format the name for the URL
-            name_query = quote_plus(full_name)
-            
-            # Use query parameters in the URL for a GET request
-            search_url = urljoin(self.base_url, f"/p/{name_query}")
-            
-            # Add location to the URL if provided
-            if location:
-                search_url += f"?location={quote_plus(location)}"
-            
-            # Set up headers for a regular web browser GET request
-            headers = {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Referer": self.base_url
-            }
-            
-            # Perform the search request as GET
-            response = self.session.get(
-                search_url, 
-                headers=headers,
-                timeout=self.timeout
-            )
-            response.raise_for_status()
-            
-            # Parse results
-            return self._parse_search_results(response.text, full_name)
-        except requests.RequestException as e:
-            error_message = str(e)
-            logger.error(f"Error searching idcrawl.com: {error_message}")
-            
-            # Check if this is a CAPTCHA challenge (HTTP 405 with specific WAF action)
-            if "405" in error_message:
-                captcha_message = ("IdCrawl.com requires human verification (CAPTCHA). "
-                                  "Direct scraping is not possible due to bot protection. "
-                                  "Please consider using alternative sources or manual verification.")
-                logger.warning(captcha_message)
-                return {
-                    "success": False,
-                    "error": captcha_message,
-                    "requires_captcha": True,
-                    "profiles": {},
-                    "platform_metadata": {},
-                    "image_metadata": None
-                }
-            else:
-                return {
-                    "success": False,
-                    "error": error_message,
-                    "profiles": {},
-                    "platform_metadata": {},
-                    "image_metadata": None
-                }
-    
-    def _parse_search_results(self, html_content, search_term):
-        """
-        Parse search results HTML from idcrawl.com
-        
-        Args:
-            html_content (str): HTML content from search results page
-            search_term (str): The search term used
-            
-        Returns:
-            dict: Structured results with profiles, platforms, etc.
-        """
-        results = {
-            "success": True,
-            "search_term": search_term,
-            "profiles": {},
-            "platform_metadata": {
-                "categories": {
-                    "Social Media": [],
-                    "Professional": [],
-                    "Content Creation": [],
-                    "Gaming": [],
-                    "Other": []
-                },
-                "detailed_metadata": {}
-            },
-            "image_metadata": None
-        }
-        
-        try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            
-            # Extract profile cards
-            profile_cards = soup.select('.profile-card, .result-card')
-            
-            for card in profile_cards:
-                platform_data = self._extract_profile_card_data(card)
-                if platform_data:
-                    platform_name = platform_data.get("platform")
-                    if platform_name:
-                        # Add to profiles
-                        results["profiles"][platform_name] = platform_data.get("url", "")
-                        
-                        # Add to platform metadata
-                        platform_category = self._categorize_platform(platform_name)
-                        if platform_category and platform_name not in results["platform_metadata"]["categories"][platform_category]:
-                            results["platform_metadata"]["categories"][platform_category].append(platform_name)
-                        
-                        # Add detailed metadata
-                        results["platform_metadata"]["detailed_metadata"][platform_name] = platform_data
-            
-            # Extract image data if available
-            image_data = self._extract_image_data(soup)
-            if image_data:
-                results["image_metadata"] = image_data
-                
-            # If no profiles found, set success to false
-            if not results["profiles"]:
-                results["success"] = False
-                results["error"] = "No profiles found for the search term"
-                
+            if idcrawl_results:
+                # If automation successful, return those results
+                # The automation already enriches results with additional data
+                logger.info(f"Used IdCrawl automation for '{username}'. Found profiles on {len(idcrawl_results)} sites.")
+                return idcrawl_results
         except Exception as e:
-            logger.error(f"Error parsing idcrawl.com results: {str(e)}")
-            results["success"] = False
-            results["error"] = f"Error parsing results: {str(e)}"
+            logger.warning(f"IdCrawl automation failed for '{username}': {e}. Falling back to HTTP checks.")
+    
+    # Otherwise, continue with HTTP-based checks
+    # Load site definitions
+    sites = load_sites_from_file(sites_file)
+    
+    # Generate username variations if enabled
+    all_usernames = [username]
+    if generate_variations:
+        all_usernames = generate_username_variations(username)
         
+    # Create session if not provided
+    should_close_session = False
+    if session is None:
+        session = aiohttp.ClientSession()
+        should_close_session = True
+        
+    try:
+        # Set up a semaphore to limit concurrency
+        semaphore = asyncio.Semaphore(concurrency_limit)
+        
+        # Create task for each site
+        tasks = []
+        for site_name, site_data in sites.items():
+            task = asyncio.create_task(
+                _check_site_with_semaphore(
+                    semaphore=semaphore,
+                    site_name=site_name,
+                    site_data=site_data,
+                    primary_username=username,
+                    username_variations=all_usernames if site_data.get("variations", False) else [username],
+                    session=session,
+                    timeout=timeout,
+                    user_agents=user_agents,
+                    proxy=proxy,
+                    max_retries=max_retries,
+                    retry_delay=retry_delay
+                ),
+                name=f"check-{site_name}-{username}"
+            )
+            tasks.append(task)
+        
+        # Wait for all tasks to complete
+        results_list = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results, handling any exceptions
+        results: Dict[str, Dict[str, Any]] = {}
+        for i, (site_name, _) in enumerate(sites.items()):
+            result = results_list[i]
+            
+            if isinstance(result, Exception):
+                logger.error(f"Error checking '{username}' on {site_name}: {result}", exc_info=True)
+                results[site_name] = {
+                    "site_name": site_name,
+                    "status": "error",
+                    "error_message": f"Task exception: {type(result).__name__}"
+                }
+            else:
+                results[site_name] = result
+                
         return results
     
-    def _extract_profile_card_data(self, card):
-        """
-        Extract data from a profile card element
-        
-        Args:
-            card (BeautifulSoup element): Profile card element
-            
-        Returns:
-            dict: Structured data from the profile card
-        """
-        try:
-            platform_data = {}
-            
-            # Extract platform name
-            platform_elm = card.select_one('.platform-name, .result-title')
-            if platform_elm:
-                platform_data["platform"] = platform_elm.get_text().strip()
-            
-            # Extract profile URL
-            url_elm = card.select_one('a.profile-link, a.result-link')
-            if url_elm and url_elm.has_attr('href'):
-                profile_url = url_elm['href']
-                # Fix relative URLs
-                if profile_url.startswith('/'):
-                    profile_url = urljoin(self.base_url, profile_url)
-                platform_data["url"] = profile_url
-            
-            # Extract username
-            username_elm = card.select_one('.username, .result-username')
-            if username_elm:
-                platform_data["username"] = username_elm.get_text().strip()
-            
-            # Extract avatar/image
-            avatar_elm = card.select_one('img.avatar, img.result-image')
-            if avatar_elm and avatar_elm.has_attr('src'):
-                avatar_url = avatar_elm['src']
-                if avatar_url.startswith('/'):
-                    avatar_url = urljoin(self.base_url, avatar_url)
-                platform_data["avatar_url"] = avatar_url
-            
-            # Extract name
-            name_elm = card.select_one('.display-name, .result-name')
-            if name_elm:
-                platform_data["name"] = name_elm.get_text().strip()
-            
-            # Extract bio/description
-            bio_elm = card.select_one('.bio, .result-description')
-            if bio_elm:
-                platform_data["bio"] = bio_elm.get_text().strip()
-            
-            # Extract profile content sample
-            content_elm = card.select_one('.content-sample, .result-content')
-            if content_elm:
-                platform_data["content_sample"] = content_elm.get_text().strip()
-            
-            # Extract connections/followers/following if available
-            connections_elm = card.select_one('.connections, .result-connections')
-            if connections_elm:
-                connections_text = connections_elm.get_text().strip()
-                platform_data["connections"] = self._parse_connections(connections_text)
-            else:
-                platform_data["connections"] = []
-            
-            # Extract profile ID (some platforms have unique IDs)
-            profile_id = ""
-            if "url" in platform_data:
-                # Try to extract ID from URL
-                id_match = re.search(r'\/([^\/]+)$', platform_data["url"])
-                if id_match:
-                    profile_id = id_match.group(1)
-                else:
-                    # Generate a unique ID
-                    platform = platform_data.get("platform", "").lower().replace(" ", "_")
-                    username = platform_data.get("username", "").lower().replace(" ", "_")
-                    profile_id = f"{platform}_{hash(platform_data['url']) & 0xffffffff:x}"
-            
-            platform_data["profile_id"] = profile_id
-            
-            return platform_data
-        except Exception as e:
-            logger.error(f"Error extracting profile card data: {str(e)}")
-            return None
-    
-    def _extract_image_data(self, soup):
-        """
-        Extract image metadata from search results
-        
-        Args:
-            soup (BeautifulSoup): Parsed HTML soup
-            
-        Returns:
-            dict: Image metadata or None if not found
-        """
-        try:
-            image_section = soup.select_one('.image-results, .reverse-image-results')
-            if not image_section:
-                return None
-                
-            image_data = {
-                "original_image": None,
-                "similar_images": [],
-                "possible_sources": []
-            }
-            
-            # Extract original image
-            orig_img = image_section.select_one('.original-image img')
-            if orig_img and orig_img.has_attr('src'):
-                image_data["original_image"] = orig_img['src']
-            
-            # Extract similar images
-            similar_imgs = image_section.select('.similar-image img')
-            for img in similar_imgs:
-                if img.has_attr('src'):
-                    image_url = img['src']
-                    if image_url.startswith('/'):
-                        image_url = urljoin(self.base_url, image_url)
-                    image_data["similar_images"].append(image_url)
-            
-            # Extract possible sources
-            source_links = image_section.select('.image-source a')
-            for link in source_links:
-                if link.has_attr('href'):
-                    source_url = link['href']
-                    if source_url.startswith('/'):
-                        source_url = urljoin(self.base_url, source_url)
-                    source_text = link.get_text().strip()
-                    image_data["possible_sources"].append({
-                        "url": source_url,
-                        "text": source_text
-                    })
-            
-            return image_data
-        except Exception as e:
-            logger.error(f"Error extracting image data: {str(e)}")
-            return None
-    
-    def _parse_connections(self, connections_text):
-        """
-        Parse connections text into structured data
-        
-        Args:
-            connections_text (str): Text containing connection information
-            
-        Returns:
-            list: List of connection objects
-        """
-        connections = []
-        
-        # Common patterns: "123 followers", "Following: 45", etc.
-        follower_match = re.search(r'(\d+)\s*followers?', connections_text, re.I)
-        following_match = re.search(r'(\d+)\s*following', connections_text, re.I)
-        friends_match = re.search(r'(\d+)\s*friends?', connections_text, re.I)
-        
-        if follower_match:
-            connections.append({
-                "type": "followers",
-                "count": int(follower_match.group(1))
-            })
-        
-        if following_match:
-            connections.append({
-                "type": "following",
-                "count": int(following_match.group(1))
-            })
-        
-        if friends_match:
-            connections.append({
-                "type": "friends",
-                "count": int(friends_match.group(1))
-            })
-        
-        return connections
-    
-    def _categorize_platform(self, platform_name):
-        """
-        Categorize a platform into predefined categories
-        
-        Args:
-            platform_name (str): The platform name to categorize
-            
-        Returns:
-            str: Category name or None if not categorized
-        """
-        platform = platform_name.lower()
-        
-        # Social Media platforms
-        if platform in ['facebook', 'twitter', 'instagram', 'snapchat', 'tiktok', 'pinterest']:
-            return "Social Media"
-        
-        # Professional platforms
-        elif platform in ['linkedin', 'github', 'gitlab', 'behance', 'dribbble', 'medium', 'dev.to', 'quora']:
-            return "Professional"
-        
-        # Content Creation platforms
-        elif platform in ['youtube', 'vimeo', 'twitch', 'soundcloud', 'bandcamp', 'mixcloud', 'patreon', 'substack']:
-            return "Content Creation"
-        
-        # Gaming platforms
-        elif platform in ['steam', 'discord', 'xbox', 'playstation', 'nintendo', 'battle.net', 'epic games']:
-            return "Gaming"
-        
-        # Default to Other
-        else:
-            return "Other"
+    finally:
+        # Close session if we created it
+        if should_close_session:
+            await session.close()
 
 
-# Stand-alone functions for easy integration with unve1ler
-
-def search_username_on_idcrawl(username, use_automation=True):
+async def _check_site_with_semaphore(
+    semaphore: asyncio.Semaphore,
+    site_name: str,
+    site_data: Dict[str, Any],
+    primary_username: str,
+    username_variations: List[str],
+    session: aiohttp.ClientSession,
+    timeout: float,
+    user_agents: Optional[List[str]],
+    proxy: Optional[str],
+    max_retries: int,
+    retry_delay: float
+) -> Dict[str, Any]:
     """
-    Search for a username on idcrawl.com
+    Check a site for a username with semaphore-based concurrency control.
+    Handles username variations and retry logic.
     
-    Args:
-        username (str): Username to search for
-        use_automation (bool): Whether to use browser automation if available
-        
     Returns:
-        dict: Structured results from idcrawl.com
+        Dictionary with site check results in IdcrawlSiteResult format
     """
-    # First try automation if available and requested
-    if use_automation and AUTOMATION_AVAILABLE and AUTOMATION_SCRIPT_AVAILABLE:
-        try:
-            logger.info(f"Using Playwright automation to search IDCrawl for username: {username}")
-            
-            # Check if browser dependencies are available
+    # Basic result template
+    result = {
+        "site_name": site_name,
+        "status": "not_found"
+    }
+    
+    # Check each username variation
+    async with semaphore:
+        for username in username_variations:
             try:
-                import tempfile
-                temp_json = os.path.join(tempfile.gettempdir(), f"idcrawl_{username}_{int(time.time())}.json")
+                # Format the URL with the username
+                url = site_data["check_uri"].format(username=username)
                 
-                # Run the search asynchronously with headless mode
-                automation_results = asyncio.run(perform_search(
-                    search_term=username,
-                    json_output_path=temp_json,
-                    browser_type="chromium",
-                    block_resources_flag=True,
-                    use_stealth=True,
-                    headless=True  # Use headless mode to avoid system dependency issues
-                ))
-            except Exception as browser_error:
-                if "missing dependencies" in str(browser_error).lower():
-                    logger.warning(f"Browser dependencies missing: {str(browser_error)}")
-                    # Create a special error result
-                    return {
-                        "success": False,
-                        "error": "Browser automation dependencies missing. Install system libraries or use direct method.",
-                        "requires_system_deps": True,
-                        "missing_deps_error": str(browser_error),
-                        "profiles": {},
-                        "platform_metadata": {},
-                        "image_metadata": None
-                    }
-                else:
-                    # Re-raise for other types of errors
-                    raise
-            
-            # Check if automation was successful
-            if automation_results.get("metadata", {}).get("success", False):
-                logger.info(f"Successfully retrieved IDCrawl results for {username} via automation")
+                # Get the HTTP method to use
+                method = site_data.get("check_method", "GET")
                 
-                # Convert automation results to the expected format
-                converted_results = {
-                    "success": True,
-                    "search_term": username,
-                    "profiles": {},
-                    "platform_metadata": {
-                        "categories": {
-                            "Social Media": [],
-                            "Professional": [],
-                            "Content Creation": [],
-                            "Gaming": [],
-                            "Other": []
-                        },
-                        "detailed_metadata": {}
-                    },
-                    "image_metadata": None
-                }
+                # Extract error status codes
+                error_codes = site_data.get("error_status_codes", [404])
                 
-                # Map platforms to their URLs and categories
-                for platform in ["Instagram", "Twitter", "Facebook", "TikTok", "LinkedIn", "Quora"]:
-                    platform_results = automation_results.get(platform, [])
-                    
-                    for item in platform_results:
-                        profile_url = item.get("url", "")
-                        if profile_url:
-                            # Add to profiles
-                            converted_results["profiles"][platform] = profile_url
-                            
-                            # Categorize the platform
-                            platform_category = "Social Media"  # Default
-                            if platform in ["LinkedIn"]:
-                                platform_category = "Professional"
-                            elif platform in ["Quora"]:
-                                platform_category = "Content Creation"
-                            
-                            # Add to categories if not already there
-                            if platform not in converted_results["platform_metadata"]["categories"][platform_category]:
-                                converted_results["platform_metadata"]["categories"][platform_category].append(platform)
-                            
-                            # Add detailed metadata
-                            converted_results["platform_metadata"]["detailed_metadata"][platform] = {
-                                "platform": platform,
-                                "url": profile_url,
-                                "username": item.get("secondary_text", ""),
-                                "name": item.get("primary_text", ""),
-                                "avatar_url": item.get("img_src", ""),
-                                "bio": item.get("full_text", ""),
-                                "connections": [],
-                                "profile_id": hashlib.md5(profile_url.encode()).hexdigest()[:12]
+                # Apply custom headers if provided
+                headers = site_data.get("headers", {})
+                if user_agents and "User-Agent" not in headers:
+                    headers["User-Agent"] = random.choice(user_agents)
+                
+                # Retry logic
+                for attempt in range(max_retries + 1):
+                    try:
+                        # Make the request
+                        response = await session.request(
+                            method=method,
+                            url=url,
+                            headers=headers,
+                            timeout=timeout,
+                            proxy=proxy,
+                            allow_redirects=site_data.get("follow_redirects", False),
+                            ssl=site_data.get("verify_ssl", True)
+                        )
+                        
+                        # Check if the response indicates a profile was found
+                        if response.status not in error_codes:
+                            # Profile found!
+                            result = {
+                                "site_name": site_name,
+                                "status": "found",
+                                "url_found": url
                             }
+                            
+                            # Add username variation info if it's different from primary
+                            if username != primary_username:
+                                result["variation_used"] = username
+                                
+                            # Log success
+                            logger.debug(f"Profile found on {site_name} with variation '{username}': {url}")
+                            
+                            # No need to check other variations once we find a match
+                            return result
+                        else:
+                            # Not found with this variation, try next
+                            logger.debug(f"Profile not found on {site_name} with variation '{username}'")
+                        
+                        # If we've made it here, this variation didn't work
+                        # but the request was successful, so don't retry
+                        break
+                        
+                    except asyncio.TimeoutError:
+                        logger.debug(f"Timeout checking '{username}' on {site_name} (attempt {attempt+1}/{max_retries+1})")
+                        if attempt < max_retries:
+                            # Wait before retrying
+                            await asyncio.sleep(retry_delay * (attempt + 1))
+                        else:
+                            # Max retries reached
+                            result = {
+                                "site_name": site_name,
+                                "status": "error",
+                                "error_message": f"Request timed out after {timeout}s"
+                            }
+                            
+                    except (ClientError, ClientResponseError, ClientConnectionError, ServerDisconnectedError) as e:
+                        logger.debug(f"HTTP error checking '{username}' on {site_name}: {e} (attempt {attempt+1}/{max_retries+1})")
+                        if attempt < max_retries:
+                            # Wait before retrying
+                            await asyncio.sleep(retry_delay * (attempt + 1))
+                        else:
+                            # Max retries reached
+                            result = {
+                                "site_name": site_name,
+                                "status": "error",
+                                "error_message": f"HTTP error: {str(e)}"
+                            }
+                            
+                    except Exception as e:
+                        # Log unexpected errors
+                        logger.error(f"Error checking '{username}' on {site_name}: {e}", exc_info=True)
+                        result = {
+                            "site_name": site_name,
+                            "status": "error",
+                            "error_message": f"Unexpected error: {str(e)}"
+                        }
+                        # Don't retry on unexpected errors
+                        break
                 
-                # Add web results to other relevant data
-                web_results = automation_results.get("Web results", [])
-                if web_results:
-                    converted_results["web_results"] = web_results
-                
-                # Add usernames list
-                usernames = automation_results.get("Usernames", [])
-                if usernames:
-                    converted_results["usernames"] = usernames
-                
-                # Add sponsored links
-                sponsored = automation_results.get("Sponsored", {})
-                if sponsored:
-                    converted_results["sponsored_links"] = sponsored
-                
-                # Clean up temporary file if necessary
-                try:
-                    if os.path.exists(temp_json):
-                        os.remove(temp_json)
-                except:
-                    pass
-                
-                return converted_results
-            elif automation_results.get("metadata", {}).get("captcha_detected", False):
-                logger.warning(f"CAPTCHA detected during automation for {username}")
-            else:
-                logger.warning(f"Automation failed for {username}: {automation_results.get('metadata', {}).get('error', 'Unknown error')}")
-        
-        except Exception as e:
-            logger.error(f"Error using automation for IDCrawl: {str(e)}")
-            # Continue to fallback method
+            except Exception as e:
+                # Catch any exceptions in the URL formatting or other unexpected issues
+                logger.error(f"Error checking variation '{username}' on {site_name}: {e}", exc_info=True)
+                result = {
+                    "site_name": site_name,
+                    "status": "error",
+                    "error_message": f"Error: {str(e)}"
+                }
     
-    # Fallback to direct scraping method
-    logger.info(f"Using direct scraping method for IDCrawl search: {username}")
-    scraper = IdCrawlScraper()
-    return scraper.search_username(username)
+    # Return the result (either a match or the last error/not found status)
+    return result
 
-def search_person_on_idcrawl(full_name, location=None, use_automation=True):
+
+async def _check_with_idcrawl_automation(
+    username: str,
+    timeout: float = 60.0,
+    proxy: Optional[str] = None,
+    user_agent: Optional[str] = None
+) -> Dict[str, Dict[str, Any]]:
     """
-    Search for a person by name and optional location on idcrawl.com
+    Use IdCrawl automation to check for a username.
+    This leverages Playwright automation to get more comprehensive results.
     
     Args:
-        full_name (str): Person's full name
-        location (str, optional): Location for filtering results
-        use_automation (bool): Whether to use browser automation if available
+        username: Username to check
+        timeout: Timeout for automation in seconds
+        proxy: Optional proxy URL
+        user_agent: Optional user agent
         
     Returns:
-        dict: Structured results from idcrawl.com
+        Dictionary of site names and results, or empty dict if automation fails
     """
-    # First try automation if available and requested
-    if use_automation and AUTOMATION_AVAILABLE and AUTOMATION_SCRIPT_AVAILABLE:
-        try:
-            logger.info(f"Using Playwright automation to search IDCrawl for: {full_name}")
-            
-            # Check if browser dependencies are available
-            try:
-                import tempfile
-                import time
-                import hashlib
-                temp_json = os.path.join(tempfile.gettempdir(), f"idcrawl_{hashlib.md5(full_name.encode()).hexdigest()[:8]}_{int(time.time())}.json")
-                
-                # Run the search asynchronously with headless mode
-                automation_results = asyncio.run(perform_search(
-                    search_term=full_name,
-                    state=location,  # Pass location as state parameter
-                    json_output_path=temp_json,
-                    browser_type="chromium",
-                    block_resources_flag=True,
-                    use_stealth=True,
-                    headless=True  # Use headless mode to avoid system dependency issues
-                ))
-            except Exception as browser_error:
-                if "missing dependencies" in str(browser_error).lower():
-                    logger.warning(f"Browser dependencies missing: {str(browser_error)}")
-                    # Create a special error result
-                    return {
-                        "success": False,
-                        "error": "Browser automation dependencies missing. Install system libraries or use direct method.",
-                        "requires_system_deps": True,
-                        "missing_deps_error": str(browser_error),
-                        "profiles": {},
-                        "platform_metadata": {},
-                        "image_metadata": None
-                    }
-                else:
-                    # Re-raise for other types of errors
-                    raise
-            
-            # Check if automation was successful - same conversion logic as above
-            if automation_results.get("metadata", {}).get("success", False):
-                logger.info(f"Successfully retrieved IDCrawl results for {full_name} via automation")
-                
-                # Convert automation results to the expected format (same as in search_username_on_idcrawl)
-                converted_results = {
-                    "success": True,
-                    "search_term": full_name,
-                    "profiles": {},
-                    "platform_metadata": {
-                        "categories": {
-                            "Social Media": [],
-                            "Professional": [],
-                            "Content Creation": [],
-                            "Gaming": [],
-                            "Other": []
-                        },
-                        "detailed_metadata": {}
-                    },
-                    "image_metadata": None
-                }
-                
-                # Map platforms to their URLs and categories
-                for platform in ["Instagram", "Twitter", "Facebook", "TikTok", "LinkedIn", "Quora"]:
-                    platform_results = automation_results.get(platform, [])
-                    
-                    for item in platform_results:
-                        profile_url = item.get("url", "")
-                        if profile_url:
-                            # Add to profiles
-                            converted_results["profiles"][platform] = profile_url
-                            
-                            # Categorize the platform
-                            platform_category = "Social Media"  # Default
-                            if platform in ["LinkedIn"]:
-                                platform_category = "Professional"
-                            elif platform in ["Quora"]:
-                                platform_category = "Content Creation"
-                            
-                            # Add to categories if not already there
-                            if platform not in converted_results["platform_metadata"]["categories"][platform_category]:
-                                converted_results["platform_metadata"]["categories"][platform_category].append(platform)
-                            
-                            # Add detailed metadata
-                            converted_results["platform_metadata"]["detailed_metadata"][platform] = {
-                                "platform": platform,
-                                "url": profile_url,
-                                "username": item.get("secondary_text", ""),
-                                "name": item.get("primary_text", ""),
-                                "avatar_url": item.get("img_src", ""),
-                                "bio": item.get("full_text", ""),
-                                "connections": [],
-                                "profile_id": hashlib.md5(profile_url.encode()).hexdigest()[:12]
-                            }
-                
-                # Add web results to other relevant data
-                web_results = automation_results.get("Web results", [])
-                if web_results:
-                    converted_results["web_results"] = web_results
-                
-                # Add usernames list
-                usernames = automation_results.get("Usernames", [])
-                if usernames:
-                    converted_results["usernames"] = usernames
-                
-                # Add sponsored links
-                sponsored = automation_results.get("Sponsored", {})
-                if sponsored:
-                    converted_results["sponsored_links"] = sponsored
-                
-                # Clean up temporary file if necessary
-                try:
-                    if os.path.exists(temp_json):
-                        os.remove(temp_json)
-                except:
-                    pass
-                
-                return converted_results
-            elif automation_results.get("metadata", {}).get("captcha_detected", False):
-                logger.warning(f"CAPTCHA detected during automation for {full_name}")
-            else:
-                logger.warning(f"Automation failed for {full_name}: {automation_results.get('metadata', {}).get('error', 'Unknown error')}")
+    if not PLAYWRIGHT_AVAILABLE or not IDCRAWL_AUTOMATION_AVAILABLE:
+        return {}
         
-        except Exception as e:
-            logger.error(f"Error using automation for IDCrawl: {str(e)}")
-            # Continue to fallback method
+    try:
+        # Run the IdCrawl automation
+        idcrawl_data = await perform_search(
+            search_term=username,
+            browser_type="chromium",
+            headless=True,
+            proxy=proxy,
+            user_agent=user_agent,
+            block_resources_flag=True,
+            use_stealth=PLAYWRIGHT_STEALTH_AVAILABLE
+        )
+        
+        if not idcrawl_data:
+            logger.warning(f"IdCrawl automation returned no data for '{username}'")
+            return {}
+        
+        # Convert IdCrawl results to our format
+        results: Dict[str, Dict[str, Any]] = {}
+        
+        # Process profiles from different sections
+        profile_sections = [
+            idcrawl_data.get("instagram", {}).get("profiles", []),
+            idcrawl_data.get("twitter", {}).get("profiles", []),
+            idcrawl_data.get("facebook", {}).get("profiles", []),
+            idcrawl_data.get("linkedin", {}).get("profiles", []),
+            idcrawl_data.get("pinterest", {}).get("profiles", []),
+            idcrawl_data.get("youtube", {}).get("profiles", []),
+            idcrawl_data.get("reddit", {}).get("profiles", []),
+            idcrawl_data.get("tiktok", {}).get("profiles", [])
+        ]
+        
+        # Process each section
+        for profiles in profile_sections:
+            if not profiles:
+                continue
+                
+            for profile in profiles:
+                if not isinstance(profile, dict):
+                    continue
+                    
+                # Extract details
+                site = profile.get("site", "unknown")
+                profile_url = profile.get("url")
+                display_name = profile.get("name", "")
+                
+                if profile_url:
+                    results[site] = {
+                        "site_name": site,
+                        "status": "found",
+                        "url_found": profile_url,
+                        "display_name": display_name
+                    }
+        
+        # Also process username listings
+        usernames = idcrawl_data.get("usernames", [])
+        for username_data in usernames:
+            if isinstance(username_data, dict):
+                site = username_data.get("platform", "")
+                platform_username = username_data.get("username", "")
+                url = username_data.get("url", "")
+                
+                if site and url and site not in results:
+                    results[site] = {
+                        "site_name": site,
+                        "status": "found",
+                        "url_found": url,
+                        "platform_username": platform_username
+                    }
+        
+        # Process web results as well
+        web_results = idcrawl_data.get("web_results", [])
+        for i, result in enumerate(web_results):
+            if isinstance(result, dict):
+                title = result.get("title", "")
+                url = result.get("url", "")
+                snippet = result.get("snippet", "")
+                
+                if url and (username.lower() in title.lower() or username.lower() in snippet.lower()):
+                    site_name = f"web_result_{i+1}"
+                    results[site_name] = {
+                        "site_name": site_name,
+                        "status": "found",
+                        "url_found": url,
+                        "title": title,
+                        "snippet": snippet
+                    }
+        
+        logger.info(f"IdCrawl automation found {len(results)} profiles for '{username}'")
+        return results
     
-    # Fallback to direct scraping method
-    logger.info(f"Using direct scraping method for IDCrawl search: {full_name}")
-    scraper = IdCrawlScraper()
-    return scraper.search_person(full_name, location)
+    except Exception as e:
+        logger.error(f"Error during IdCrawl automation for '{username}': {e}", exc_info=True)
+        return {}
 
-def enrich_results_with_idcrawl(original_results, username=None, full_name=None, location=None, skip_idcrawl=False, use_automation=True):
+
+# --- Direct Use Testing ---
+
+async def test_username_check(username: str):
+    """Test function for checking a username directly"""
+    print(f"Testing username check for: {username}")
+    
+    async with aiohttp.ClientSession() as session:
+        results = await check_username_on_sites_async(
+            username=username,
+            session=session,
+            timeout=10.0,
+            generate_variations=True
+        )
+        
+        print(f"\nResults for {username}:")
+        print("=" * 50)
+        
+        found_sites = []
+        error_sites = []
+        
+        for site, data in results.items():
+            status = data.get("status")
+            if status == "found":
+                found_sites.append((site, data.get("url_found")))
+            elif status == "error":
+                error_sites.append((site, data.get("error_message")))
+        
+        print(f"Found on {len(found_sites)} sites:")
+        for site, url in found_sites:
+            print(f"- {site}: {url}")
+            
+        print(f"\nErrors on {len(error_sites)} sites:")
+        for site, error in error_sites:
+            print(f"- {site}: {error}")
+            
+    print("\nTest complete!")
+
+
+# --- Functions Used by people_finder.py ---
+
+async def search_username_on_idcrawl(username, session=None):
     """
-    Enrich existing search results with data from idcrawl.com
+    Function to search for a username on IDCrawl.
+    This is the main entry point used by the people_finder module.
     
     Args:
-        original_results (dict): Original search results to enrich
-        username (str, optional): Username to search for
-        full_name (str, optional): Person's full name
-        location (str, optional): Location for filtering results
-        skip_idcrawl (bool, optional): Skip idcrawl.com API calls (for testing or when CAPTCHA is known to be present)
-        use_automation (bool, optional): Whether to attempt browser automation for bypassing CAPTCHA
+        username: Username to search for
+        session: Optional aiohttp session
         
     Returns:
-        dict: Enriched search results
+        Dictionary of results
     """
-    # Clone original results to avoid modifying the original
-    enriched_results = original_results.copy()
+    # Call our existing username checker
+    try:
+        return await check_username_on_sites_async(
+            username=username,
+            session=session,
+            timeout=10.0,  # Default timeout of 10 seconds
+            generate_variations=True
+        )
+    except Exception as e:
+        logger.error(f"Error in search_username_on_idcrawl: {e}", exc_info=True)
+        return {"error": {"status": "error", "error_message": f"Search failed: {str(e)}"}}
+
+
+async def search_person_on_idcrawl(full_name, location=None, session=None):
+    """
+    Function to search for a person by full name on IDCrawl.
+    This function is used by the people_finder module.
     
-    # If skipping idcrawl, add a warning and return original results
-    if skip_idcrawl:
-        if "warnings" not in enriched_results:
-            enriched_results["warnings"] = []
-        enriched_results["warnings"].append({
-            "source": "idcrawl",
-            "message": "IdCrawl.com integration was skipped (CAPTCHA protection is active)",
-            "requires_captcha": True
-        })
-        logger.info("Skipping idcrawl.com integration due to CAPTCHA protection")
-        return enriched_results
-    
-    # Check if we have automation available
-    automation_status = "available" if AUTOMATION_AVAILABLE and AUTOMATION_SCRIPT_AVAILABLE else "unavailable"
-    logger.info(f"IDCrawl automation is {automation_status} (use_automation={use_automation})")
-    
-    # Track which search method to use
-    idcrawl_results = None
-    
-    if username:
-        idcrawl_results = search_username_on_idcrawl(username, use_automation=use_automation)
-    elif full_name:
-        idcrawl_results = search_person_on_idcrawl(full_name, location, use_automation=use_automation)
-    else:
-        return original_results  # No search criteria provided
-    
-    # Check if the search was successful
-    if not idcrawl_results.get("success", False):
-        error_message = idcrawl_results.get('error', 'Unknown error')
-        # Check if this is a CAPTCHA error
-        if idcrawl_results.get("requires_captcha", False):
-            logger.warning(f"IdCrawl search requires CAPTCHA verification: {error_message}")
-            # Add the captcha warning to the enriched results
-            if "warnings" not in enriched_results:
-                enriched_results["warnings"] = []
-            enriched_results["warnings"].append({
-                "source": "idcrawl",
-                "message": error_message,
-                "requires_captcha": True
-            })
-            # Continue using only the original results
-            return enriched_results
-        else:
-            logger.warning(f"IdCrawl search failed: {error_message}")
-            return original_results
-    
-    # Merge profiles
-    if "profiles" in original_results and "profiles" in idcrawl_results:
-        for platform, url in idcrawl_results["profiles"].items():
-            if platform not in original_results["profiles"]:
-                enriched_results["profiles"][platform] = url
-                logger.info(f"Added new profile from IdCrawl: {platform}")
-    
-    # Add or merge discovered data
-    if "discovered_data" in original_results:
-        if "platform_metadata" in idcrawl_results and "detailed_metadata" in idcrawl_results["platform_metadata"]:
-            for platform, metadata in idcrawl_results["platform_metadata"]["detailed_metadata"].items():
-                # Extract possible real names
-                if "name" in metadata and metadata["name"]:
-                    name = metadata["name"]
-                    if name not in enriched_results["discovered_data"]["possible_real_names"]:
-                        enriched_results["discovered_data"]["possible_real_names"].append(name)
-                
-                # Extract possible locations from bio text
-                if "bio" in metadata and metadata["bio"]:
-                    bio = metadata["bio"]
-                    # Basic location extraction - could be improved with NLP
-                    location_matches = re.findall(r'\b(?:from|in|at)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', bio)
-                    for loc in location_matches:
-                        if loc not in enriched_results["discovered_data"]["possible_locations"]:
-                            enriched_results["discovered_data"]["possible_locations"].append(loc)
-                
-                # Extract possible occupations from bio
-                if "bio" in metadata and metadata["bio"]:
-                    bio = metadata["bio"]
-                    # Basic occupation extraction
-                    occupation_matches = re.findall(r'\b(?:am\s+a|am\s+an|I\'m\s+a|I\'m\s+an|work\s+as\s+a|work\s+as\s+an)\s+([a-z]+(?:\s+[a-z]+){0,2})', bio, re.I)
-                    for occ in occupation_matches:
-                        if occ not in enriched_results["discovered_data"]["possible_occupations"]:
-                            enriched_results["discovered_data"]["possible_occupations"].append(occ)
-    
-    # Add image data if available and not already present
-    if "image_metadata" in idcrawl_results and idcrawl_results["image_metadata"]:
-        if "image_metadata" not in enriched_results or not enriched_results["image_metadata"]:
-            enriched_results["image_metadata"] = idcrawl_results["image_metadata"]
-    
-    # Update confidence if more profiles were found
-    if "confidence" in original_results:
-        original_profile_count = len(original_results.get("profiles", {}))
-        new_profile_count = len(enriched_results.get("profiles", {}))
+    Args:
+        full_name: Person's full name to search for
+        location: Optional location info to narrow results
+        session: Optional aiohttp session
         
-        if new_profile_count > original_profile_count:
-            # Boost confidence based on additional profiles found
-            additional_profiles = new_profile_count - original_profile_count
-            confidence_boost = min(0.2, additional_profiles * 0.04)  # Up to 0.2 boost
-            enriched_results["confidence"] = min(1.0, original_results.get("confidence", 0) + confidence_boost)
+    Returns:
+        Dictionary of results
+    """
+    # Currently we use our username checker on the full name
+    # In the future this could be improved to use specific person search functionality
+    try:
+        if location:
+            logger.info(f"Searching for '{full_name}' in location '{location}'")
+            # TODO: Use location parameter in future implementations
+            
+        return await check_username_on_sites_async(
+            username=full_name,
+            session=session,
+            timeout=15.0,  # Longer timeout for full name searches
+            generate_variations=True
+        )
+    except Exception as e:
+        logger.error(f"Error in search_person_on_idcrawl: {e}", exc_info=True)
+        return {"error": {"status": "error", "error_message": f"Search failed: {str(e)}"}}
+
+
+def enrich_results_with_idcrawl(results, profile_data):
+    """
+    Enrich search results with additional data from IDCrawl.
+    This function is used by the people_finder module.
     
-    return enriched_results
+    Args:
+        results: Existing results dictionary
+        profile_data: Profile data from IDCrawl
+        
+    Returns:
+        Enriched results dictionary
+    """
+    # Just a simple implementation that combines the dictionaries
+    if not results:
+        return profile_data
+    if not profile_data:
+        return results
+        
+    # Start with the results
+    enriched = dict(results)
+    
+    # Add/update with profile data
+    for platform, data in profile_data.items():
+        if platform not in enriched:
+            enriched[platform] = data
+        elif isinstance(enriched[platform], dict) and isinstance(data, dict):
+            # Merge dictionaries
+            enriched[platform].update(data)
+            
+    return enriched
 
 
 if __name__ == "__main__":
-    # Example usage
     import sys
     
-    if len(sys.argv) > 1:
-        search_term = sys.argv[1]
-        logger.info(f"Searching idcrawl.com for: {search_term}")
+    if len(sys.argv) < 2:
+        print("Usage: python idcrawl_scraper.py <username>")
+        sys.exit(1)
         
-        results = search_username_on_idcrawl(search_term)
-        
-        print(json.dumps(results, indent=2))
-    else:
-        print("Usage: python idcrawl_scraper.py <username or name>")
+    test_username = sys.argv[1]
+    asyncio.run(test_username_check(test_username))

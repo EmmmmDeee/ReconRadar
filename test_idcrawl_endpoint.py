@@ -1,159 +1,237 @@
-#!/usr/bin/env python3
 """
-Test client for the IdCrawl automation endpoint
+Test script to check if the IDCrawl username checking functionality is working.
+This script adds a simple endpoint to your Flask app to test the functionality.
 """
 
-import requests
-import json
-import sys
 import logging
-import time
+import argparse
+from flask import Blueprint, request, jsonify, current_app
+import asyncio
+import aiohttp
+from concurrent.futures import ThreadPoolExecutor
+import json
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("idcrawl_endpoint_test")
 
-def test_idcrawl_endpoint(search_type="username", query="johndoe", location=None, use_automation=True):
-    """
-    Test the IdCrawl automation endpoint
-    
-    Args:
-        search_type (str): 'username' or 'person'
-        query (str): The search term to use
-        location (str, optional): Location for person searches
-        use_automation (bool): Whether to use automation
+# Import our modules
+try:
+    from models import load_config
+    from osint_modules import run_username_checks_async, USERNAME_CHECK_ENABLED, CHECK_TYPE
+    CONFIG = load_config()
+    logger.info(f"Successfully imported config and modules. Username check is {'' if USERNAME_CHECK_ENABLED else 'NOT '}enabled. Using {CHECK_TYPE} for checks.")
+except ImportError as e:
+    logger.error(f"Import error: {e}")
+    logger.error("Make sure models.py, osint_modules.py, and config.json are in the correct location")
+
+# Thread pool for running async code in Flask
+executor = ThreadPoolExecutor(max_workers=4)
+
+# Async wrapper to run in Flask
+def async_wrapper(async_func):
+    """Wrapper to run async functions in Flask"""
+    async def run_async(*args, **kwargs):
+        try:
+            async with aiohttp.ClientSession() as session:
+                kwargs['session'] = session  # Add session to kwargs
+                return await async_func(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Error in async_wrapper: {e}", exc_info=True)
+            return {"error": str(e)}
+            
+    def wrapper(*args, **kwargs):
+        try:
+            return asyncio.run(run_async(*args, **kwargs))
+        except Exception as e:
+            logger.error(f"Error running async function: {e}", exc_info=True)
+            return {"error": str(e)}
         
-    Returns:
-        dict: The response from the endpoint
-    """
-    url = "http://localhost:5000/test/idcrawl-automation"
+    return wrapper
+
+# Blueprint creation function
+def create_test_blueprint():
+    """Create a blueprint for testing the IDCrawl username checking functionality"""
+    bp = Blueprint('idcrawl_test', __name__)
     
-    payload = {
-        "type": search_type,
-        "query": query,
-        "use_automation": use_automation
-    }
+    @bp.route('/test/username-check', methods=['GET', 'POST'])
+    def test_username_check():
+        """Test endpoint for the IDCrawl username checking functionality"""
+        # Default username if none provided
+        default_username = "johnsmith"
+        
+        if request.method == 'POST':
+            try:
+                data = request.json
+                if not data:
+                    return jsonify({"status": "error", "message": "No JSON data provided"}), 400
+                    
+                # Extract usernames
+                usernames = data.get('usernames', [default_username])
+                if isinstance(usernames, str):
+                    usernames = [usernames]  # Convert single username to list
+                    
+                if not isinstance(usernames, list):
+                    return jsonify({"status": "error", "message": "Invalid usernames format"}), 400
+                    
+                # Run username checks
+                logger.info(f"Starting username checks for: {usernames}")
+                results = run_username_checks_wrapper(usernames)
+                
+                # Return results
+                return jsonify({
+                    "status": "success",
+                    "message": f"Checked {len(usernames)} usernames",
+                    "data": results
+                })
+                
+            except Exception as e:
+                logger.error(f"Error in test_username_check: {e}", exc_info=True)
+                return jsonify({"status": "error", "message": f"Server error: {str(e)}"}), 500
+        
+        # If GET request, show a simple form
+        return """
+        <html>
+            <head>
+                <title>Test IDCrawl Username Checking</title>
+                <link rel="stylesheet" href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css">
+                <style>
+                    body {
+                        padding: 20px;
+                    }
+                    #results {
+                        margin-top: 20px;
+                        white-space: pre-wrap;
+                        background-color: #222;
+                        padding: 15px;
+                        border-radius: 5px;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1 class="mt-4 mb-4">Test IDCrawl Username Checking</h1>
+                    <div class="card">
+                        <div class="card-body">
+                            <form id="usernameForm">
+                                <div class="mb-3">
+                                    <label for="usernames" class="form-label">Usernames (comma-separated)</label>
+                                    <input type="text" class="form-control" id="usernames" value="johnsmith">
+                                </div>
+                                <button type="submit" class="btn btn-primary">Check Usernames</button>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <div class="card mt-4">
+                        <div class="card-header">Results</div>
+                        <div class="card-body">
+                            <div id="loading" style="display: none;">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <span class="ms-2">Checking usernames, please wait...</span>
+                            </div>
+                            <pre id="results">No results yet.</pre>
+                        </div>
+                    </div>
+                </div>
+                
+                <script>
+                    document.getElementById('usernameForm').addEventListener('submit', async function(e) {
+                        e.preventDefault();
+                        
+                        const usernamesInput = document.getElementById('usernames').value;
+                        const usernames = usernamesInput.split(',').map(u => u.trim()).filter(u => u);
+                        
+                        if (!usernames.length) {
+                            alert('Please enter at least one username');
+                            return;
+                        }
+                        
+                        // Show loading indicator
+                        document.getElementById('loading').style.display = 'block';
+                        document.getElementById('results').textContent = 'Checking usernames...';
+                        
+                        try {
+                            const response = await fetch('/test/username-check', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    usernames: usernames
+                                })
+                            });
+                            
+                            const data = await response.json();
+                            
+                            // Format results
+                            document.getElementById('results').textContent = JSON.stringify(data, null, 2);
+                        } catch (error) {
+                            document.getElementById('results').textContent = `Error: ${error.message}`;
+                        } finally {
+                            // Hide loading indicator
+                            document.getElementById('loading').style.display = 'none';
+                        }
+                    });
+                </script>
+            </body>
+        </html>
+        """
     
-    logger.info(f"Using automation: {use_automation}")
-    
-    if location:
-        payload["location"] = location
-    
-    headers = {
-        "Content-Type": "application/json"
-    }
-    
+    @bp.route('/test/status', methods=['GET'])
+    def test_status():
+        """Test endpoint to check if the IDCrawl username checking functionality is enabled"""
+        return jsonify({
+            "status": "success",
+            "username_check_enabled": USERNAME_CHECK_ENABLED,
+            "check_type": CHECK_TYPE,
+            "message": f"Username check is {'' if USERNAME_CHECK_ENABLED else 'NOT '}enabled. Using {CHECK_TYPE} for checks."
+        })
+        
+    return bp
+
+# Async wrapper for run_username_checks_async
+@async_wrapper
+async def run_username_checks_wrapper(usernames, session=None):
+    """Wrapper for run_username_checks_async"""
     try:
-        logger.info(f"Testing IdCrawl endpoint with {search_type} search for '{query}'")
-        start_time = time.time()
+        results = await run_username_checks_async(usernames, session)
         
-        response = requests.post(url, json=payload, headers=headers)
-        
-        # Log timing information
-        time_taken = time.time() - start_time
-        logger.info(f"Request completed in {time_taken:.2f} seconds")
-        
-        # Parse response
-        if response.status_code == 200:
-            result = response.json()
+        # Convert Pydantic models to dictionaries
+        serializable_results = {}
+        for username, user_result in results.items():
+            user_dict = {}
+            try:
+                # For Pydantic v2
+                for site, data in user_result.root.items():
+                    user_dict[site] = data.model_dump()
+            except AttributeError:
+                # For Pydantic v1
+                for site, data in user_result.__root__.items():
+                    user_dict[site] = data.model_dump() if hasattr(data, 'model_dump') else data.dict()
+            serializable_results[username] = user_dict
             
-            # Log success/failure
-            if result.get("status") == "success":
-                logger.info(f"Search successful! Found {len(result.get('results', {}).get('profiles', {}))} profiles")
-                
-                # Log automation status
-                automation = result.get("automation_status", {})
-                if automation.get("using_automation", False):
-                    logger.info("Used browser automation for this search")
-                else:
-                    logger.info("Used direct HTTP requests for this search")
-                
-                # Return the full response for further processing
-                return result
-            elif result.get("status") == "captcha_required":
-                logger.warning("CAPTCHA verification required. Automation may have been detected.")
-                return result
-            else:
-                logger.error(f"Search failed: {result.get('error', 'Unknown error')}")
-                return result
-        else:
-            logger.error(f"HTTP error {response.status_code}: {response.text}")
-            return {"error": f"HTTP {response.status_code}", "details": response.text}
-            
+        return serializable_results
     except Exception as e:
-        logger.error(f"Error testing endpoint: {str(e)}")
+        logger.error(f"Error in run_username_checks_wrapper: {e}", exc_info=True)
         return {"error": str(e)}
-
-def print_profiles(results):
-    """
-    Print profile information in a readable format
-    
-    Args:
-        results (dict): The search results
-    """
-    if not results or "results" not in results:
-        print("No results to display")
-        return
-    
-    profiles = results.get("results", {}).get("profiles", {})
-    if not profiles:
-        print("No profiles found")
-        return
-    
-    print("\n=== Profiles Found ===")
-    for platform, url in profiles.items():
-        print(f"{platform}: {url}")
-    
-    # Check for platform metadata
-    platform_metadata = results.get("results", {}).get("platform_metadata", {})
-    if platform_metadata:
-        print("\n=== Platform Categories ===")
-        for category, platforms in platform_metadata.get("categories", {}).items():
-            if platforms:
-                print(f"{category}: {', '.join(platforms)}")
-
-if __name__ == "__main__":
-    # Parse arguments
-    search_type = "username"
-    query = "johndoe"
-    location = None
-    use_automation = True
-    
-    # Parse all arguments
-    args = sys.argv[1:]
-    options = [arg for arg in args if arg.startswith("--")]
-    positional = [arg for arg in args if not arg.startswith("--")]
-    
-    # Process positional arguments
-    if len(positional) > 0:
-        search_type = positional[0]
-    
-    if len(positional) > 1:
-        query = positional[1]
-    
-    if len(positional) > 2 and search_type == "person":
-        location = positional[2]
-    
-    # Process named options
-    for opt in options:
-        if opt.startswith("--use_automation="):
-            value = opt.split("=")[1].lower()
-            use_automation = value in ("true", "yes", "1", "t", "y")
-        elif opt == "--no-automation":
-            use_automation = False
-    
-    # Log parameter values
-    logger.info(f"Parameters: type={search_type}, query={query}, location={location}, use_automation={use_automation}")
-    
-    # Run the test
-    results = test_idcrawl_endpoint(search_type, query, location, use_automation)
-    
-    # Pretty print the results
-    if results and "error" not in results:
-        print_profiles(results)
         
-        # Print timing information
-        processing_time = results.get("processing_time_seconds", 0)
-        print(f"\nProcessing time: {processing_time:.2f} seconds")
-    else:
-        print(f"Error: {results.get('error', 'Unknown error')}")
+# Function to register the blueprint with a Flask app
+def register_test_blueprint(app):
+    """Register the test blueprint with a Flask app"""
+    bp = create_test_blueprint()
+    app.register_blueprint(bp)
+    logger.info("Registered IDCrawl test blueprint")
+    
+    
+if __name__ == "__main__":
+    print("This script is meant to be imported by your Flask app.")
+    print("Add the following to your app.py:")
+    print("from test_idcrawl_endpoint import register_test_blueprint")
+    print("register_test_blueprint(app)")
+    print("Then you can test the username checking at /test/username-check")
