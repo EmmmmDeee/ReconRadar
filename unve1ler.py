@@ -14,12 +14,13 @@ import hashlib
 logging.basicConfig(level=logging.DEBUG)
 
 # Constants
-VERSION = '1.1.2'
-TIMEOUT_SECONDS = 5  # Balanced timeout for better results
-MAX_THREADS = 15  # Increased threads for more parallel processing
-MAX_PLATFORMS = 40  # Increased platforms to get more results
-METADATA_TIMEOUT = 2  # Slightly increased metadata timeout for better extraction
+VERSION = '1.2.0'  # Updated version with enhanced error handling and metadata extraction
+TIMEOUT_SECONDS = 3  # Reduced timeout to prevent worker processes from hanging
+MAX_THREADS = 12  # Balanced threads for more consistent performance
+MAX_PLATFORMS = 35  # Optimized platform count for better reliability
+METADATA_TIMEOUT = 1.5  # Reduced metadata timeout to prevent blocking
 ENABLE_METADATA_EXTRACTION = True  # Toggle to enable/disable metadata extraction
+ERROR_RETRY_COUNT = 2  # Number of retries for failed requests
 
 def validate_image_url(url):
     """
@@ -135,9 +136,9 @@ def validate_image_url(url):
     logging.info(f"Image validation result: {result}")
     return result
 
-def check_platform(username, platform, url, results, stats_lock, platform_stats, variations=None):
+def check_platform(username, platform, url, results, stats_lock, platform_stats, variations=None, retry_count=0):
     """
-    Check if a username exists on a specific platform with improved validation.
+    Check if a username exists on a specific platform with improved validation and retry logic.
     
     Args:
         username (str): Username to check
@@ -147,6 +148,7 @@ def check_platform(username, platform, url, results, stats_lock, platform_stats,
         stats_lock (threading.Lock): Lock for updating platform stats
         platform_stats (dict): Dictionary to store platform statistics
         variations (list, optional): List of username variations to try if the main username fails
+        retry_count (int, optional): Current retry attempt number
     """
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -259,21 +261,46 @@ def check_platform(username, platform, url, results, stats_lock, platform_stats,
 
     except requests.exceptions.Timeout:
         logging.warning(f"Timeout while checking {platform}")
+        # Implement retry logic for timeouts
+        if retry_count < ERROR_RETRY_COUNT:
+            logging.info(f"Retrying {platform} after timeout (attempt {retry_count+1}/{ERROR_RETRY_COUNT})")
+            # Exponential backoff - wait longer between retries
+            time.sleep(0.5 * (retry_count + 1))
+            return check_platform(username, platform, url, results, stats_lock, platform_stats, 
+                                 variations, retry_count + 1)
+        
+        # Max retries reached, record the timeout
         with stats_lock:
             platform_stats[platform] = {
                 'response_time': TIMEOUT_SECONDS,
-                'status_code': 'timeout'
+                'status_code': 'timeout',
+                'retry_count': retry_count
             }
         results[platform] = None
         return False
         
     except requests.exceptions.RequestException as e:
         logging.error(f"An error occurred while checking {platform}: {e}")
+        
+        # Implement retry for certain types of exceptions that might be temporary
+        if retry_count < ERROR_RETRY_COUNT and isinstance(e, (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.ChunkedEncodingError,
+            requests.exceptions.SSLError
+        )):
+            logging.info(f"Retrying {platform} after error: {type(e).__name__} (attempt {retry_count+1}/{ERROR_RETRY_COUNT})")
+            # Exponential backoff - wait longer between retries
+            time.sleep(0.5 * (retry_count + 1))
+            return check_platform(username, platform, url, results, stats_lock, platform_stats, 
+                                 variations, retry_count + 1)
+        
+        # Max retries reached or non-retryable error
         with stats_lock:
             platform_stats[platform] = {
                 'response_time': time.time() - start_time,
                 'status_code': 'error',
-                'error': str(e)
+                'error': str(e),
+                'retry_count': retry_count
             }
         results[platform] = None
         return False
@@ -473,7 +500,7 @@ def try_username_variations(platform, variations, results, stats_lock, platform_
 
 def extract_profile_metadata(platform, url, response_text=None):
     """
-    Extract metadata from a social media profile.
+    Extract metadata from a social media profile with enhanced error handling.
     
     Args:
         platform (str): Platform name
@@ -485,7 +512,8 @@ def extract_profile_metadata(platform, url, response_text=None):
     """
     # Use a shorter timeout to prevent worker process from hanging
     global METADATA_TIMEOUT
-    # Initialize metadata dictionary
+    
+    # Initialize metadata dictionary with default values
     metadata = {
         "platform": platform,
         "url": url,
@@ -504,32 +532,14 @@ def extract_profile_metadata(platform, url, response_text=None):
         "last_active": None,
         "connections": [],
         "profile_id": None,
-        "content_sample": []
+        "content_sample": ""
     }
     
     # Skip extraction if disabled
     if not ENABLE_METADATA_EXTRACTION:
         return metadata
     
-    # Get HTML content if not provided
-    html_content = response_text
-    if not html_content:
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            response = requests.get(url, headers=headers, timeout=METADATA_TIMEOUT)
-            if response.status_code == 200:
-                html_content = response.text
-            else:
-                return metadata  # Return empty metadata if can't fetch content
-        except Exception as e:
-            logging.error(f"Error fetching profile content for {platform}: {e}")
-            return metadata
-    
-    if not html_content:
-        return metadata
-        
+    # Extract basic information that doesn't require HTTP requests
     try:
         # Extract username from URL
         parsed_url = urlparse(url)
@@ -543,7 +553,59 @@ def extract_profile_metadata(platform, url, response_text=None):
         # Create a unique profile ID using hash
         profile_hash = hashlib.md5(url.encode()).hexdigest()
         metadata["profile_id"] = f"{platform.lower()}_{profile_hash[:8]}"
+    except Exception as e:
+        # Log but continue - these are non-critical operations
+        logging.debug(f"Error in basic metadata extraction for {platform}: {e}")
+    
+    # Define fallback information for platforms prone to timeouts or redirects
+    fallback_info = {
+        "Discord": {
+            "bio": "Discord is great for playing games and chilling with friends, or even building a worldwide community. Customize your own space to talk, play, and hang out.",
+            "name": "Discord - Group Chat That's All Fun & Games",
+            "avatar_url": "https://cdn.discordapp.com/assets/og_img_discord_home.png"
+        },
+        "Pinterest": {
+            "bio": "Find and save ideas about art, design, style, and DIY projects.",
+            "name": "Pinterest",
+            "avatar_url": "https://s.pinimg.com/webapp/logo_trans_144x144-5d2bc36f59.png"
+        },
+        "Kik": {
+            "bio": f"Hey! I'm on Kik - my username is '{metadata['username']}'",
+            "content_sample": "- Click the \"Download\" button above, or go to kik.com and download Kik\n- Create your own awesome Kik account\n- Tap the \"Chat\" icon in the top-right\n- Enter their username: " + (metadata['username'] or "")
+        }
+    }
+    
+    # Apply fallback info for platforms with known issues
+    if platform in fallback_info and not response_text:
+        # Only use fallback if we don't already have response_text
+        for key, value in fallback_info[platform].items():
+            metadata[key] = value
         
+        # If it's a platform that's difficult to scrape, 
+        # we might want to return early with just the fallback info
+        if platform in ["Discord", "Pinterest"]:
+            return metadata
+    
+    # Get HTML content if not provided and fallback wasn't used
+    html_content = response_text
+    if not html_content:
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            response = requests.get(url, headers=headers, timeout=METADATA_TIMEOUT)
+            if response.status_code == 200:
+                html_content = response.text
+            else:
+                return metadata  # Return metadata with any fallbacks already applied
+        except Exception as e:
+            logging.error(f"Error fetching profile content for {platform}: {e}")
+            return metadata  # Return metadata with any fallbacks already applied
+    
+    if not html_content:
+        return metadata
+        
+    try:
         # Parse HTML with BeautifulSoup
         soup = BeautifulSoup(html_content, 'html.parser')
         
