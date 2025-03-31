@@ -15,4 +15,5 @@ dependencies = [
     "requests>=2.32.3",
     "tenacity>=9.0.0",
     "trafilatura>=2.0.0",
+    "pydantic>=2.11.1",
 ]
