@@ -24,7 +24,7 @@ def extract_social_profiles_from_text(text_content):
     """
     results = {}
     
-    # Common social media URL patterns with enhanced matching
+    # Comprehensive social media URL patterns with enhanced matching and additional platforms
     patterns = {
         'Twitter': r'https?://(www\.)?(twitter|x)\.com/([A-Za-z0-9_]+)',
         'Instagram': r'https?://(www\.)?instagram\.com/([A-Za-z0-9_\.]+)/?',
@@ -34,6 +34,7 @@ def extract_social_profiles_from_text(text_content):
         # Additional GitHub patterns for variable formats
         'GitHub-Repo': r'github(?:\.com)?[\s:=]+(?:https?://(www\.)?github\.com/)?([A-Za-z0-9_\-]+)(?:/|\s|$)',
         'YouTube': r'https?://(www\.)?youtube\.com/(user|channel|c)/([A-Za-z0-9_\-]+)/?',
+        'YouTube-Simple': r'https?://(www\.)?youtube\.com/@([A-Za-z0-9_\-]+)/?',
         'TikTok': r'https?://(www\.)?tiktok\.com/@([A-Za-z0-9_\.]+)/?',
         'Reddit': r'https?://(www\.)?reddit\.com/user/([A-Za-z0-9_\-]+)/?',
         'Pinterest': r'https?://(www\.)?pinterest\.com/([A-Za-z0-9_\-]+)/?',
@@ -41,6 +42,34 @@ def extract_social_profiles_from_text(text_content):
         'Telegram': r'https?://(www\.)?t\.me/([A-Za-z0-9_]+)/?',
         'Medium': r'https?://(www\.)?medium\.com/@?([A-Za-z0-9_\-\.]+)/?',
         'Twitch': r'https?://(www\.)?twitch\.tv/([A-Za-z0-9_]+)/?',
+        # Cryptocurrency and dark web platforms
+        'Keybase': r'https?://(www\.)?keybase\.io/([A-Za-z0-9_\-]+)/?',
+        'Bitcoin-Address': r'\b(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b',
+        'Ethereum-Address': r'\b0x[a-fA-F0-9]{40}\b',
+        'Onion-Service': r'https?://([a-z2-7]{16}|[a-z2-7]{56})\.onion/([^\s]*)/?',
+        # Professional networks
+        'Behance': r'https?://(www\.)?behance\.net/([A-Za-z0-9_\-]+)/?',
+        'Dribbble': r'https?://(www\.)?dribbble\.com/([A-Za-z0-9_\-]+)/?',
+        'Stack-Overflow': r'https?://(www\.)?stackoverflow\.com/users/(\d+)/([A-Za-z0-9_\-]+)/?',
+        'Gitlab': r'https?://(www\.)?gitlab\.com/([A-Za-z0-9_\-\.]+)/?',
+        # Coding platforms
+        'Replit': r'https?://(www\.)?replit\.com/@([A-Za-z0-9_\-]+)/?',
+        'CodePen': r'https?://(www\.)?codepen\.io/([A-Za-z0-9_\-]+)/?',
+        'Pastebin': r'https?://(www\.)?pastebin\.com/u/([A-Za-z0-9_\-]+)/?',
+        'HackerRank': r'https?://(www\.)?hackerrank\.com/([A-Za-z0-9_\-]+)/?',
+        'LeetCode': r'https?://(www\.)?leetcode\.com/([A-Za-z0-9_\-]+)/?',
+        # Gaming platforms
+        'Steam': r'https?://(www\.)?steamcommunity\.com/(id|profiles)/([A-Za-z0-9_\-]+)/?',
+        'Xbox': r'https?://(www\.)?xboxgamertag\.com/search/([A-Za-z0-9_\-\s]+)/?',
+        'PSN': r'https?://(www\.)?psnprofiles\.com/([A-Za-z0-9_\-]+)/?',
+        # Music platforms
+        'Spotify': r'https?://(www\.)?open\.spotify\.com/user/([A-Za-z0-9_\-\.]+)/?',
+        'SoundCloud': r'https?://(www\.)?soundcloud\.com/([A-Za-z0-9_\-\.]+)/?',
+        'Last.fm': r'https?://(www\.)?last\.fm/user/([A-Za-z0-9_\-]+)/?',
+        # Image platforms
+        'Flickr': r'https?://(www\.)?flickr\.com/people/([A-Za-z0-9@_\-\.]+)/?',
+        'Imgur': r'https?://(www\.)?imgur\.com/user/([A-Za-z0-9_\-]+)/?',
+        'DeviantArt': r'https?://(www\.)?deviantart\.com/([A-Za-z0-9_\-]+)/?',
         # Website and blog patterns - more flexible to catch variable formats
         'Website': r'website\s*[\s:=]+\s*[\'"]?(https?://[^\s\'"]+)[\'"]?',
         'Blog': r'blog\s*[\s:=]+\s*[\'"]?(https?://[^\s\'"]+)[\'"]?',
@@ -90,6 +119,8 @@ def extract_social_profiles_from_text(text_content):
                 elif platform == 'YouTube':
                     subpath = match[1]  # user, channel, or c
                     url = f"https://www.youtube.com/{subpath}/{username}"
+                elif platform == 'YouTube-Simple':
+                    url = f"https://www.youtube.com/@{username}"
                 elif platform == 'TikTok':
                     url = f"https://www.tiktok.com/@{username}"
                 elif platform == 'Reddit':
@@ -105,6 +136,53 @@ def extract_social_profiles_from_text(text_content):
                     url = f"https://medium.com/@{username}"
                 elif platform == 'Twitch':
                     url = f"https://www.twitch.tv/{username}"
+                # New platform handling
+                elif platform == 'Keybase':
+                    url = f"https://keybase.io/{username}"
+                elif platform == 'Bitcoin-Address' or platform == 'Ethereum-Address':
+                    url = username  # Cryptocurrency addresses don't have a standard URL format
+                elif platform == 'Onion-Service':
+                    if match[1]:  # onion domain
+                        onion_domain = match[0]
+                        url = onion_domain
+                elif platform == 'Behance':
+                    url = f"https://www.behance.net/{username}"
+                elif platform == 'Dribbble':
+                    url = f"https://dribbble.com/{username}"
+                elif platform == 'Stack-Overflow':
+                    user_id = match[1]
+                    url = f"https://stackoverflow.com/users/{user_id}/{username}"
+                elif platform == 'Gitlab':
+                    url = f"https://gitlab.com/{username}"
+                elif platform == 'Replit':
+                    url = f"https://replit.com/@{username}"
+                elif platform == 'CodePen':
+                    url = f"https://codepen.io/{username}"
+                elif platform == 'Pastebin':
+                    url = f"https://pastebin.com/u/{username}"
+                elif platform == 'HackerRank':
+                    url = f"https://hackerrank.com/{username}"
+                elif platform == 'LeetCode':
+                    url = f"https://leetcode.com/{username}"
+                elif platform == 'Steam':
+                    subpath = match[1]  # id or profiles
+                    url = f"https://steamcommunity.com/{subpath}/{username}"
+                elif platform == 'Xbox':
+                    url = f"https://xboxgamertag.com/search/{username}"
+                elif platform == 'PSN':
+                    url = f"https://psnprofiles.com/{username}"
+                elif platform == 'Spotify':
+                    url = f"https://open.spotify.com/user/{username}"
+                elif platform == 'SoundCloud':
+                    url = f"https://soundcloud.com/{username}"
+                elif platform == 'Last.fm':
+                    url = f"https://last.fm/user/{username}"
+                elif platform == 'Flickr':
+                    url = f"https://www.flickr.com/people/{username}/"
+                elif platform == 'Imgur':
+                    url = f"https://imgur.com/user/{username}"
+                elif platform == 'DeviantArt':
+                    url = f"https://deviantart.com/{username}"
                 
                 # Skip if no URL was created
                 if url is None:
@@ -159,25 +237,34 @@ def extract_usernames_from_text(text_content):
         'yours', 'yourself', 'yourselves'
     ])
     
-    # Advanced pattern recognition for username formats
+    # Advanced pattern recognition for username formats with expanded capabilities
     username_patterns = [
         # Explicit username markers with high confidence
-        (r'(?:(?:user(?:name)?|account)(?:\s+(?:is|:))?\s+[\'"]?(@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\'"]?)', 1.0),
+        (r'(?:(?:user(?:name)?|account|handle|alias)(?:\s+(?:is|:))?\s+[\'"]?(@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\'"]?)', 1.0),
         
-        # Social media style @ mentions
-        (r'@([A-Za-z0-9][A-Za-z0-9_\.]{2,24})\b', 0.9),
+        # Social media style @ mentions with expanded character set
+        (r'@([A-Za-z0-9][A-Za-z0-9_\.-]{2,24})\b', 0.9),
         
-        # Username with common indicators
-        (r'(?:follow|add|contact|find|message)\s+(?:me|us|him|her|them)?\s+(?:at|on|via|using)?\s+[\'"]?(@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\'"]?', 0.8),
+        # Username with common indicators including aliases
+        (r'(?:follow|add|contact|find|message|dm|ping|reach)\s+(?:me|us|him|her|them)?\s+(?:at|on|via|using|through)?\s+[\'"]?(@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\'"]?', 0.85),
         
         # Generic username patterns with context clues (lower confidence)
-        (r'\b(?:my|the|their|his|her)\s+(?:id|handle|user|account)\s+(?:is|:)?\s+[\'"]?([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\'"]?', 0.7),
+        (r'\b(?:my|the|their|his|her|our)\s+(?:id|handle|user|account|alias|nick|profile|tag)\s+(?:is|:)?\s+[\'"]?([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\'"]?', 0.75),
         
-        # Platform-specific identifier with username
-        (r'(?:twitter|instagram|github|reddit|snapchat|tiktok)(?:.com)?(?:/|\s+)(@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})\b', 0.8),
+        # Platform-specific identifier with username (expanded platforms)
+        (r'(?:twitter|x|instagram|github|reddit|snapchat|tiktok|linkedin|discord|telegram|youtube|pinterest|behance|dribbble|mastodon|twitch|gitlab)(?:.com|.org|.io|.gg|.me)?(?:/|\s+)(@?)([A-Za-z0-9][A-Za-z0-9_\.-]{2,24})\b', 0.85),
         
-        # Usernames in parentheses (often used in formal writing to denote handles)
-        (r'\((@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})\)', 0.6),
+        # Email pattern usernames (extract username part from email)
+        (r'\b([a-zA-Z0-9][a-zA-Z0-9._-]{2,24})@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b', 0.8),
+        
+        # Usernames in various enclosures (parentheses, brackets, etc.)
+        (r'[\(\[\{](@?)([A-Za-z0-9][A-Za-z0-9_\.]{2,24})[\)\]\}]', 0.65),
+        
+        # Common username formats with special patterns
+        (r'\b([A-Za-z][A-Za-z0-9]{1,10}[_.-][A-Za-z0-9]{1,10})\b', 0.55), # pattern like john_doe, john.doe
+        
+        # Dark web handles with specific formats (onion addresses)
+        (r'(?:on|at|via)\s+(?:tor|onion|dark\s*web|hidden\s*service):\s*([A-Za-z0-9_-]{2,24})', 0.9),
         
         # Generic usernames (lowest confidence, needs more validation)
         (r'\b([A-Za-z][A-Za-z0-9_\.]{2,24})\b', 0.3)

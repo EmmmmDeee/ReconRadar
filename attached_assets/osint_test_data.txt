@@ -1,0 +1,60 @@
+# Advanced OSINT Data Collection Sample
+# This file contains various types of data to test the enhanced OSINT capabilities
+
+## Social Media Profiles
+Twitter: @osint_expert
+GitHub: https://github.com/osint-tools
+Instagram: @digital_investigation
+LinkedIn: https://linkedin.com/in/osint-professional
+Medium: @osint_techniques
+Discord: discord.gg/osintcommunity
+Telegram: t.me/osint_channel
+YouTube: https://youtube.com/@osint_tutorials
+Reddit user: u/osint_resources
+Mastodon: @osint@mastodon.social
+
+## Contact Information
+Email: contact@osintexample.com
+Secondary Email: osint.research@protonmail.com
+Phone: +1 (555) 123-4567
+Office: 555-987-6543
+
+## Cryptocurrency Addresses
+Bitcoin: 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
+Ethereum: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+
+## Physical Locations
+Headquarters: 123 Investigation Street, Suite 456, New York, NY 10001, USA
+Satellite Office: 10 Research Avenue, London SE1 9SG, United Kingdom
+GPS Coordinates: 40.7128, -74.0060
+Alternative Format: 51° 30' 26" N, 0° 7' 39" W
+
+## Dark Web References
+Onion Service: https://expyuzz4wqqyqhjn.onion
+Tor Username: secure_osint_researcher
+
+## Technical Identifiers
+IP Range: 192.168.1.0/24
+DNS Server: ns1.osintexample.com
+API Endpoint: https://api.osintexample.com/v2/search
+
+## Usernames
+My username is digital_detective
+You can find me as cyber_tracker on most forums
+Connect with osint_guru for more information
+Also known as: web_intelligence_specialist
+
+## Project Details
+Project Name: ThreatMapper
+Version: 2.5.1
+Repository: git@github.com:osint-tools/threat-mapper.git
+Website: https://threat-mapper.osintexample.com
+
+## Online Tools Used
+- WHOIS Lookup: https://whois.domaintools.com
+- Reverse Image Search: https://images.google.com
+- Archive Explorer: https://web.archive.org
+
+## Additional Resources
+Join our weekly webinar at https://webinar.osintexample.com
+Download our free toolkit from https://tools.osintexample.com/download

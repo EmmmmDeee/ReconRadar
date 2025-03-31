@@ -1,4 +1,5 @@
 import os
+import requests
 from flask import Flask, render_template, request, jsonify, url_for, send_from_directory
 import logging
 import json
@@ -14,7 +15,12 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "unve1ler_default_secret")
 
 from unve1ler import check_social_media, VERSION
-from web_scraper import get_website_text_content, extract_metadata_from_url
+from web_scraper import (
+    get_website_text_content, 
+    extract_metadata_from_url, 
+    extract_geolocation_data, 
+    extract_contact_information
+)
 from assets import process_attached_file, extract_social_profiles_from_text, extract_usernames_from_text, extract_image_urls_from_text
 
 class JSONEncoder(json.JSONEncoder):
@@ -98,9 +104,37 @@ def extract_web_content():
         # Track processing time
         start_time = time.time()
         
+        # Get a proper User-Agent header
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        # First fetch the raw HTML for advanced analysis 
+        response = None
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            html_content = response.text if response.status_code == 200 else None
+        except Exception as e:
+            logging.warning(f"Failed to fetch HTML content for advanced analysis: {str(e)}")
+            html_content = None
+        
         # Extract content from URL
         extracted_text = get_website_text_content(url)
         url_metadata = extract_metadata_from_url(url)
+        
+        # Additional analysis if we have the HTML content
+        geolocation_data = {}
+        contact_data = {}
+        
+        if html_content:
+            try:
+                # Extract geolocation data
+                geolocation_data = extract_geolocation_data(html_content, url)
+                
+                # Extract contact information
+                contact_data = extract_contact_information(html_content)
+            except Exception as analysis_error:
+                logging.warning(f"Error during advanced content analysis: {str(analysis_error)}")
         
         # Calculate processing time
         processing_time = round(time.time() - start_time, 2)
@@ -117,6 +151,8 @@ def extract_web_content():
             'content_length': len(extracted_text) if isinstance(extracted_text, str) else 0,
             'processing_time_seconds': processing_time,
             'metadata': url_metadata,
+            'geolocation': geolocation_data,
+            'contact_information': contact_data,
             'timestamp': datetime.now(),
             'status': 'success'
         }
@@ -281,16 +317,26 @@ def api_info():
     """Provide information about the API"""
     return jsonify({
         'name': 'unve1ler',
-        'description': 'OSINT tool for discovering online profiles by username and performing reverse image searches',
+        'description': 'Advanced OSINT tool for discovering online profiles, geolocation data, contact information, and performing reverse image searches',
         'version': VERSION,
+        'capabilities': {
+            'username_search': 'Search for profiles across social media platforms',
+            'reverse_image_search': 'Generate reverse image search links for popular search engines',
+            'metadata_extraction': 'Extract metadata from profiles including avatar, bio, followers, etc.',
+            'content_extraction': 'Extract readable content from web pages',
+            'geolocation_detection': 'Extract geolocation data from websites using various methods',
+            'contact_information': 'Extract email addresses, phone numbers and physical addresses',
+            'dark_web_detection': 'Identify potential dark web services and cryptocurrency addresses',
+            'username_intelligence': 'Advanced pattern recognition for potential usernames'
+        },
         'endpoints': {
             '/': 'Web interface for the tool',
-            '/search': 'POST endpoint for searching profiles',
-            '/extract': 'POST endpoint for extracting readable content from websites',
-            '/analyze/text': 'POST endpoint for analyzing text content',
-            '/analyze/file': 'POST endpoint for analyzing file content',
-            '/analyze/file/<filename>': 'GET endpoint for analyzing an existing file',
-            '/api/info': 'GET information about the API'
+            '/search': 'POST endpoint for searching profiles and generating reverse image search links',
+            '/extract': 'POST endpoint for extracting readable content, geolocation and contact information from websites',
+            '/analyze/text': 'POST endpoint for analyzing text content to find social profiles, usernames, and image URLs',
+            '/analyze/file': 'POST endpoint for analyzing file content to find profiles and other indicators',
+            '/analyze/file/<filename>': 'GET endpoint for analyzing an existing file in the attached_assets directory',
+            '/api/info': 'GET information about the API capabilities and endpoints'
         }
     })
 
