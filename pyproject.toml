@@ -9,7 +9,10 @@ dependencies = [
     "flask>=3.1.0",
     "flask-sqlalchemy>=3.1.1",
     "gunicorn>=23.0.0",
+    "playwright-stealth>=1.0.6",
+    "playwright>=1.51.0",
     "psycopg2-binary>=2.9.10",
     "requests>=2.32.3",
+    "tenacity>=9.0.0",
     "trafilatura>=2.0.0",
 ]

@@ -1,0 +1,493 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+# Refactored Single Script for IDCrawl OSINT Automation
+# Version: 2025-03-30_R1
+# Description: Checks/installs dependencies, embeds and runs an optimized
+#              Playwright script to search idcrawl.com and parse results.
+#              CRITICAL: Requires editing embedded Python selectors!
+
+# Strict mode
+set -euo pipefail
+
+# --- Script Configuration ---
+PYTHON_SCRIPT_NAME="./idcrawl_parser_temp.py" # Generated Python script filename
+DEFAULT_BROWSER="chromium"
+LOG_PREFIX="[IDC-RUNNER]"
+
+# --- Bash Functions ---
+
+usage() {
+  cat << EOF
+Usage: $(basename "$0") -s <search_term> [options]
+
+Mandatory:
+  -s, --search-term <term>   The name or query to search for on idcrawl.com
+
+Options:
+  -j, --json-output <file>   Save parsed results to JSON file (e.g., results.json)
+  -p, --screenshot <file>    Save screenshot of results page (e.g., results.png)
+  -h, --html-output <file>   Save raw results page HTML (e.g., results.html)
+  -b, --browser <name>       Browser to use: 'chromium' or 'firefox' (default: $DEFAULT_BROWSER)
+  --skip-deps                Skip PKG and PIP dependency checks/installations
+  --skip-browser-install     Skip Playwright browser installation attempt
+  --keep-script              Do not delete the generated Python script after execution
+  --no-block                 Disable resource blocking in Playwright
+  --no-stealth               Disable playwright-stealth patches
+  -?, --help                 Show this help message
+
+Example:
+  $(basename "$0") -s "Jerome Despal" -j results.json -p page.png -b chromium
+EOF
+  exit 0
+}
+
+# Function to check and install PKG dependencies
+install_pkg_deps() {
+  local PKG_DEPS=(python nodejs-lts git build-essential libjpeg-turbo libpng libwebp libxml2 libxslt curl wget)
+  local pkg_to_install=()
+  echo "$LOG_PREFIX Checking PKG dependencies: ${PKG_DEPS[*]}"
+  for pkg in "${PKG_DEPS[@]}"; do
+    if dpkg -s "$pkg" &> /dev/null; then
+      echo "$LOG_PREFIX [OK] $pkg installed."
+    else
+      echo "$LOG_PREFIX [INFO] $pkg marked for installation."
+      pkg_to_install+=("$pkg")
+    fi
+  done
+  if [ ${#pkg_to_install[@]} -gt 0 ]; then
+    echo "$LOG_PREFIX Installing missing PKG dependencies: ${pkg_to_install[*]}"
+    pkg update -y && pkg install -y "${pkg_to_install[@]}"
+  else
+    echo "$LOG_PREFIX All PKG dependencies already satisfied."
+  fi
+}
+
+# Function to check and install PIP dependencies
+install_pip_deps() {
+  local PIP_DEPS=(playwright playwright-stealth tenacity)
+  local pip_to_install=()
+  echo "$LOG_PREFIX Checking PIP dependencies: ${PIP_DEPS[*]}"
+  pip install --upgrade pip # Ensure pip is updated first
+  for pkg in "${PIP_DEPS[@]}"; do
+    if pip show "$pkg" &> /dev/null; then
+      echo "$LOG_PREFIX [OK] $pkg installed."
+    else
+      echo "$LOG_PREFIX [INFO] $pkg marked for installation."
+      pip_to_install+=("$pkg")
+    fi
+  done
+  if [ ${#pip_to_install[@]} -gt 0 ]; then
+    echo "$LOG_PREFIX Installing missing PIP dependencies: ${pip_to_install[*]}"
+    pip install --upgrade "${pip_to_install[@]}"
+  else
+    echo "$LOG_PREFIX All PIP dependencies already satisfied."
+  fi
+}
+
+# Function to install Playwright browser
+install_playwright_browser() {
+  local browser_name="$1"
+  echo "$LOG_PREFIX Ensuring Playwright browser '$browser_name' is installed..."
+  echo "$LOG_PREFIX This might take some time..."
+  playwright install --with-deps "$browser_name"
+  echo "$LOG_PREFIX [OK] Playwright browser install command for '$browser_name' executed."
+}
+
+# Function to create the embedded Python script
+create_python_script() {
+  echo "$LOG_PREFIX Creating Python script: $PYTHON_SCRIPT_NAME"
+  # HEREDOC embeds the Python code.
+  # >>> EDIT THE PYTHON CODE WITHIN THIS BLOCK, ESPECIALLY THE SELECTORS <<<
+  cat << 'EOF' > "$PYTHON_SCRIPT_NAME"
+#!/usr/bin/env python3
+# --- BEGIN Embedded Python Script ---
+# --- >>> EDIT SELECTORS BELOW BEFORE RUNNING <<< ---
+import asyncio
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
+from playwright_stealth import stealth_async
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+import argparse
+import sys
+import random
+import time
+import json
+import re
+
+# --- Constants ---
+DEFAULT_TIMEOUT = 60000
+NAVIGATION_TIMEOUT = 90000
+RETRY_ATTEMPTS = 3
+RETRY_WAIT_SECONDS = 5
+BLOCK_RESOURCE_TYPES = ["image", "font", "media", "stylesheet"]
+BLOCK_URL_PATTERNS = [
+    "*google-analytics.com*", "*googletagmanager.com*", "*doubleclick.net*",
+    "*facebook.net/tr*", "*scorecardresearch.com*", "*quantserve.com*"
+]
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36'
+]
+
+# --- !!! CRITICAL: PLACEHOLDER SELECTORS !!! ---
+# --- !!! YOU MUST EDIT THESE VALUES AFTER INSPECTING idcrawl.com !!! ---
+# --- !!! Replace "#EDIT_ME_..." with actual CSS Selectors or XPath !!! ---
+# Homepage elements
+SEARCH_INPUT_SELECTOR = '#EDIT_ME_SEARCH_INPUT_SELECTOR' # e.g., 'input[name="q"]'
+SEARCH_BUTTON_SELECTOR = '#EDIT_ME_SEARCH_BUTTON_SELECTOR' # e.g., 'button:has-text("Search")'
+STATE_SELECTOR = '#EDIT_ME_STATE_SELECTOR' # e.g., 'select[name="state"]'
+CSRF_META_SELECTOR = 'meta[name="csrf-token"]' # Usually correct
+# Results page - Use specific selectors found via browser dev tools
+INSTAGRAM_ITEMS_SELECTOR = "#EDIT_ME_INSTAGRAM_ITEMS_CONTAINER > .item"
+TWITTER_ITEMS_SELECTOR = "#EDIT_ME_TWITTER_ITEMS_CONTAINER > .item"
+FACEBOOK_ITEMS_SELECTOR = "#EDIT_ME_FACEBOOK_ITEMS_CONTAINER > .item"
+TIKTOK_ITEMS_SELECTOR = "#EDIT_ME_TIKTOK_ITEMS_CONTAINER > .item"
+LINKEDIN_ITEMS_SELECTOR = "#EDIT_ME_LINKEDIN_ITEMS_CONTAINER > .item"
+QUORA_ITEMS_SELECTOR = "#EDIT_ME_QUORA_ITEMS_CONTAINER > .item"
+USERNAMES_ITEMS_SELECTOR = "#EDIT_ME_USERNAMES_LIST > li"
+WEB_RESULTS_ITEMS_SELECTOR = "#EDIT_ME_WEB_RESULTS_CONTAINER > .result"
+# Selectors relative to WEB_RESULTS_ITEMS_SELECTOR:
+WEB_RESULT_TITLE_SELECTOR = ".EDIT_ME_TITLE_CLASS > a"
+WEB_RESULT_LINK_SELECTOR = ".EDIT_ME_TITLE_CLASS > a"
+WEB_RESULT_SNIPPET_SELECTOR = ".EDIT_ME_SNIPPET_CLASS"
+# Sponsored Blocks Selectors
+SPONSORED_BLOCK_SELECTOR = ".EDIT_ME_SPONSORED_BLOCK"
+SPONSORED_TOPIC_SELECTOR = "xpath=preceding-sibling::h2[1]" # Relative to sponsor block
+SPONSORED_LINK_SELECTOR = "a.EDIT_ME_SPONSORED_LINK" # Relative to sponsor block
+# --- !!! END OF CRITICAL SELECTOR SECTION !!! ---
+
+# --- Argument Parser (Python Script) ---
+parser = argparse.ArgumentParser(description="Embedded IDCrawl Parser")
+parser.add_argument("search_term", help="Search term")
+parser.add_argument("--state", help="State filter")
+parser.add_argument("--browser", help="Browser type")
+parser.add_argument("--screenshot", help="Screenshot output file")
+parser.add_argument("--output_html", help="HTML output file")
+parser.add_argument("--output_json", help="JSON output file")
+parser.add_argument("--proxy_server", help="Proxy server")
+parser.add_argument("--user_agent", help="User-Agent")
+parser.add_argument("--no_block", action="store_true", help="Disable resource blocking")
+parser.add_argument("--no_stealth", action="store_true", help="Disable stealth")
+py_args = parser.parse_args()
+
+# --- Helper Functions --- (Identical to previous version)
+async def safe_get_text(locator, default="N/A"):
+    try: return (await locator.text_content(timeout=5000) or "").strip() or default
+    except Exception: return default
+async def safe_get_attribute(locator, attribute, default="N/A"):
+    try: return (await locator.get_attribute(attribute, timeout=5000) or "").strip() or default
+    except Exception: return default
+
+# --- Retry Decorator --- (Identical to previous version)
+retry_decorator = retry( stop=stop_after_attempt(RETRY_ATTEMPTS), wait=wait_fixed(RETRY_WAIT_SECONDS), retry=retry_if_exception_type((PlaywrightTimeoutError, PlaywrightError)), reraise=True )
+
+# --- Resource Blocker --- (Identical to previous version)
+async def block_resources(route, request):
+    is_blocked_type = request.resource_type in BLOCK_RESOURCE_TYPES
+    is_blocked_url = any(re.match(pattern.replace("*", ".*"), request.url) for pattern in BLOCK_URL_PATTERNS)
+    if is_blocked_type or is_blocked_url: await route.abort()
+    else: await route.continue_()
+
+# --- Parsing Functions (Contain PLACEHOLDER selectors - NEEDS REFINEMENT) ---
+# (Functions: parse_generic_profile_section, parse_usernames, parse_web_results, parse_sponsored)
+# (These are identical to the previous 'complete' version - EDIT SELECTORS!)
+async def parse_generic_profile_section(page, section_name, item_selector, data_dict):
+    items_data = []
+    print(f"[*] Parsing '{section_name}' section (Selector: {item_selector})...")
+    if "EDIT_ME" in item_selector: print(f"[WARN] Using placeholder selector for {section_name}!"); return # Skip if placeholder
+    try:
+        item_locators = page.locator(item_selector)
+        count = await item_locators.count()
+        print(f"[*] Found {count} potential '{section_name}' items.")
+        for i in range(count):
+            item = item_locators.nth(i)
+            link_locator = item.locator("a").first
+            primary_text_locator = item.locator(".name, .title, h3, strong").first # Adjust these sub-selectors too!
+            secondary_text_locator = item.locator(".username, .handle, .subtitle").first
+            img_locator = item.locator("img").first
+            url = await safe_get_attribute(link_locator, 'href')
+            primary_text = await safe_get_text(primary_text_locator)
+            secondary_text = await safe_get_text(secondary_text_locator)
+            full_text = await safe_get_text(item) if primary_text == "N/A" else primary_text
+            img_src = await safe_get_attribute(img_locator, 'src')
+            if url != "N/A": items_data.append({ "primary_text": primary_text, "secondary_text": secondary_text, "full_text": full_text.strip(), "url": url, "img_src": img_src })
+        data_dict[section_name] = items_data
+        print(f"[+] Parsed {len(items_data)} '{section_name}' items.")
+    except Exception as e: print(f"[!] Error parsing '{section_name}': {e}"); data_dict[section_name] = []
+
+async def parse_usernames(page, item_selector, data_dict):
+    usernames = []
+    print(f"[*] Parsing 'Usernames' section (Selector: {item_selector})...")
+    if "EDIT_ME" in item_selector: print(f"[WARN] Using placeholder selector for Usernames!"); return
+    try:
+        username_locators = page.locator(item_selector)
+        count = await username_locators.count()
+        print(f"[*] Found {count} potential username elements.")
+        for i in range(count):
+            username_text = await safe_get_text(username_locators.nth(i))
+            if username_text != "N/A" and "show all results" not in username_text.lower(): usernames.append(username_text.strip())
+        data_dict["Usernames"] = usernames
+        print(f"[+] Parsed {len(usernames)} usernames.")
+    except Exception as e: print(f"[!] Error parsing Usernames: {e}"); data_dict["Usernames"] = []
+
+async def parse_web_results(page, item_selector, title_selector, link_selector, snippet_selector, data_dict):
+    web_results = []
+    print(f"[*] Parsing 'Web results' section (Item Selector: {item_selector})...")
+    if "EDIT_ME" in item_selector: print(f"[WARN] Using placeholder selector for Web results!"); return
+    try:
+        item_locators = page.locator(item_selector)
+        count = await item_locators.count()
+        print(f"[*] Found {count} potential Web results.")
+        for i in range(count):
+            item = item_locators.nth(i)
+            title_elem = item.locator(title_selector).first
+            link_elem = item.locator(link_selector).first
+            snippet_elem = item.locator(snippet_selector).first
+            title = await safe_get_text(title_elem)
+            link = await safe_get_attribute(link_elem, 'href')
+            snippet = await safe_get_text(snippet_elem)
+            if link != "N/A": web_results.append({ "title": title, "url": link, "snippet": snippet })
+        data_dict["Web results"] = web_results
+        print(f"[+] Parsed {len(web_results)} Web results.")
+    except Exception as e: print(f"[!] Error parsing Web results: {e}"); data_dict["Web results"] = []
+
+async def parse_sponsored(page, block_selector, topic_selector, link_selector, data_dict):
+    sponsored_links = {}
+    print(f"[*] Parsing 'Sponsored' sections (Block Selector: {block_selector})...")
+    if "EDIT_ME" in block_selector: print(f"[WARN] Using placeholder selector for Sponsored blocks!"); return
+    try:
+        sponsored_blocks = page.locator(block_selector)
+        count = await sponsored_blocks.count()
+        print(f"[*] Found {count} potential sponsored blocks.")
+        for i in range(count):
+             block = sponsored_blocks.nth(i)
+             block_text = await safe_get_text(block)
+             service_name = "Unknown Sponsor"
+             if "PeopleLooker" in block_text: service_name = "PeopleLooker"
+             elif "TruthFinder" in block_text: service_name = "TruthFinder"
+             elif "Spokeo" in block_text: service_name = "Spokeo"
+             action_link_locator = block.locator(link_selector).first
+             action_link = await safe_get_attribute(action_link_locator, 'href')
+             topic_heading_locator = block.locator(topic_selector).first
+             topic_heading = await safe_get_text(topic_heading_locator)
+             if topic_heading != "N/A": sponsored_links[topic_heading.strip()] = {"service": service_name, "action_link": action_link}
+             else: sponsored_links[f"Sponsored Block {i+1}"] = {"service": service_name, "action_link": action_link, "text": block_text[:100]}
+        data_dict["Sponsored Links / Sections"] = sponsored_links
+        print(f"[+] Identified {len(sponsored_links)} sponsored sections/blocks.")
+    except Exception as e: print(f"[!] Error parsing Sponsored sections: {e}"); data_dict["Sponsored Links / Sections"] = {}
+
+# --- Main Execution Logic ---
+@retry_decorator
+async def run_main():
+    # --- Browser Launch & Context Setup ---
+    # (Identical logic, uses py_args now)
+    parsed_data = {"search_term": py_args.search_term, "results_url": None, "results_title": None, "results": {}}
+    async with async_playwright() as p:
+        browser_launcher = p.chromium if py_args.browser == "chromium" else p.firefox
+        launch_options = { "headless": True, "args": ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote', '--disable-gpu'] }
+        if py_args.proxy_server: launch_options["proxy"] = {"server": py_args.proxy_server}
+        print(f"[*] Launching {py_args.browser} via Playwright...")
+        browser = await browser_launcher.launch(**launch_options)
+        context = await browser.new_context( user_agent=py_args.user_agent or random.choice(USER_AGENTS), viewport={'width': 1920, 'height': 1080}, locale='en-US', timezone_id='America/New_York' )
+        page = await context.new_page()
+        if not py_args.no_stealth: print("[*] Applying stealth..."); await stealth_async(page)
+        if not py_args.no_block: print(f"[*] Enabling resource blocking..."); await page.route("**/*", block_resources)
+
+        # --- Navigation & Search ---
+        start_url = "https://www.idcrawl.com/"
+        print(f"[*] Navigating to {start_url}...")
+        await page.goto(start_url, timeout=DEFAULT_TIMEOUT, wait_until='domcontentloaded')
+        print(f"[*] Initial page loaded: {await page.title()}")
+        # CSRF handling might be needed for more complex interactions, but form submit often works
+        print(f"[*] Filling search term: '{py_args.search_term}'")
+        await page.locator(SEARCH_INPUT_SELECTOR).first.fill(py_args.search_term, timeout=15000)
+        print("[*] Clicking search button...")
+        async with page.expect_navigation(wait_until="networkidle", timeout=NAVIGATION_TIMEOUT):
+            await page.locator(SEARCH_BUTTON_SELECTOR).first.click()
+        print(f"[*] Search submitted. Landed on URL: {page.url}")
+        print(f"[*] Results page title: {await page.title()}")
+        parsed_data["results_url"] = page.url
+        parsed_data["results_title"] = await page.title()
+        await asyncio.sleep(3)
+
+        # --- Call Parsing Functions ---
+        # Make sure the selectors at the top are edited!
+        await parse_generic_profile_section(page, "Instagram", INSTAGRAM_ITEMS_SELECTOR, parsed_data["results"])
+        await parse_generic_profile_section(page, "Twitter", TWITTER_ITEMS_SELECTOR, parsed_data["results"])
+        await parse_generic_profile_section(page, "Facebook", FACEBOOK_ITEMS_SELECTOR, parsed_data["results"])
+        await parse_generic_profile_section(page, "TikTok", TIKTOK_ITEMS_SELECTOR, parsed_data["results"])
+        await parse_generic_profile_section(page, "LinkedIn", LINKEDIN_ITEMS_SELECTOR, parsed_data["results"])
+        await parse_generic_profile_section(page, "Quora", QUORA_ITEMS_SELECTOR, parsed_data["results"])
+        await parse_usernames(page, USERNAMES_ITEMS_SELECTOR, parsed_data["results"])
+        await parse_web_results(page, WEB_RESULTS_ITEMS_SELECTOR, WEB_RESULT_TITLE_SELECTOR, WEB_RESULT_LINK_SELECTOR, WEB_RESULT_SNIPPET_SELECTOR, parsed_data["results"])
+        await parse_sponsored(page, SPONSORED_BLOCK_SELECTOR, SPONSORED_TOPIC_SELECTOR, SPONSORED_LINK_SELECTOR, parsed_data["results"])
+
+        # --- Final Output/Save ---
+        if py_args.output_html: html_content = await page.content(); open(py_args.output_html, 'w', encoding='utf-8').write(html_content); print(f"[*] Results HTML saved to: {py_args.output_html}")
+        if py_args.screenshot: print(f"[*] Saving final screenshot to {py_args.screenshot}"); await page.screenshot(path=py_args.screenshot, full_page=True)
+        await context.close()
+        await browser.close()
+    return parsed_data
+
+# --- Main Execution Block ---
+if __name__ == "__main__":
+    print("[INFO] Starting Embedded Python script execution...")
+    final_data = {}
+    try:
+        final_data = asyncio.run(run_main())
+        if py_args.output_json:
+             try:
+                 with open(py_args.output_json, 'w', encoding='utf-8') as f: json.dump(final_data, f, indent=4)
+                 print(f"[*] Parsed data saved to JSON: {py_args.output_json}")
+             except Exception as e: print(f"[!] Error saving JSON: {e}")
+        elif final_data.get("results"):
+            print("\n--- Parsed Data (Console Output) ---")
+            print(json.dumps(final_data, indent=4))
+        print("[INFO] Embedded Python script finished successfully.")
+    except Exception as main_error:
+        print(f"\n[!!!] Embedded Python script execution failed: {main_error}")
+        sys.exit(1) # Exit Python script with error
+
+# --- END Embedded Python Script ---
+EOF
+  # Check if file was created
+  if [ -f "$PYTHON_SCRIPT_NAME" ]; then
+      echo "$LOG_PREFIX [OK] Python script created: $PYTHON_SCRIPT_NAME"
+      chmod +x "$PYTHON_SCRIPT_NAME" # Make executable
+  else
+      echo "$LOG_PREFIX [ERROR] Failed to create Python script: $PYTHON_SCRIPT_NAME"
+      exit 1
+  fi
+}
+
+# --- Cleanup Function ---
+cleanup() {
+  if [ "$KEEP_SCRIPT" = false ] && [ -f "$PYTHON_SCRIPT_NAME" ]; then
+    echo "$LOG_PREFIX Cleaning up temporary Python script: $PYTHON_SCRIPT_NAME"
+    rm -f "$PYTHON_SCRIPT_NAME"
+  else
+    echo "$LOG_PREFIX Keeping Python script: $PYTHON_SCRIPT_NAME"
+  fi
+}
+
+# --- Main Script Logic ---
+
+# Default values for flags
+SEARCH_TERM=""
+JSON_OUTPUT=""
+HTML_OUTPUT=""
+SCREENSHOT_FILE=""
+BROWSER_CHOICE="$DEFAULT_BROWSER"
+SKIP_DEPS=false
+SKIP_BROWSER_INSTALL=false
+KEEP_SCRIPT=false
+NO_BLOCK=false
+NO_STEALTH=false
+
+# Setup trap for cleanup on exit
+trap cleanup EXIT
+
+# Parse command-line options using getopt
+OPTS=$(getopt -o s:j:p:h:b:? -l search-term:,json-output:,screenshot:,html-output:,browser:,skip-deps,skip-browser-install,keep-script,no-block,no-stealth,help \
+             -n "$(basename "$0")" -- "$@")
+if [ $? != 0 ] ; then echo "$LOG_PREFIX [ERROR] Failed parsing options." >&2 ; usage ; exit 1 ; fi
+
+eval set -- "$OPTS"
+
+while true; do
+  case "$1" in
+    -s | --search-term ) SEARCH_TERM="$2"; shift 2 ;;
+    -j | --json-output ) JSON_OUTPUT="$2"; shift 2 ;;
+    -p | --screenshot ) SCREENSHOT_FILE="$2"; shift 2 ;;
+    -h | --html-output ) HTML_OUTPUT="$2"; shift 2 ;;
+    -b | --browser ) BROWSER_CHOICE="$2"; shift 2 ;;
+    --skip-deps ) SKIP_DEPS=true; shift ;;
+    --skip-browser-install ) SKIP_BROWSER_INSTALL=true; shift ;;
+    --keep-script ) KEEP_SCRIPT=true; shift ;;
+    --no-block ) NO_BLOCK=true; shift ;;
+    --no-stealth ) NO_STEALTH=true; shift ;;
+    -\? | --help ) usage ;;
+    -- ) shift; break ;;
+    * ) break ;;
+  esac
+done
+
+# Validate mandatory search term
+if [ -z "$SEARCH_TERM" ]; then
+  echo "$LOG_PREFIX [ERROR] Search term (-s or --search-term) is mandatory." >&2
+  usage
+fi
+
+# Validate browser choice
+if [[ "$BROWSER_CHOICE" != "chromium" && "$BROWSER_CHOICE" != "firefox" ]]; then
+    echo "$LOG_PREFIX [ERROR] Invalid browser choice: '$BROWSER_CHOICE'. Must be 'chromium' or 'firefox'." >&2
+    usage
+fi
+
+echo "$LOG_PREFIX --- Configuration ---"
+echo "$LOG_PREFIX Search Term:          \"$SEARCH_TERM\""
+echo "$LOG_PREFIX JSON Output:          ${JSON_OUTPUT:-N/A}"
+echo "$LOG_PREFIX HTML Output:          ${HTML_OUTPUT:-N/A}"
+echo "$LOG_PREFIX Screenshot File:      ${SCREENSHOT_FILE:-N/A}"
+echo "$LOG_PREFIX Browser:              $BROWSER_CHOICE"
+echo "$LOG_PREFIX Skip Dep Checks:      $SKIP_DEPS"
+echo "$LOG_PREFIX Skip Browser Install: $SKIP_BROWSER_INSTALL"
+echo "$LOG_PREFIX Keep Python Script:   $KEEP_SCRIPT"
+echo "$LOG_PREFIX Disable Res Blocking: $NO_BLOCK"
+echo "$LOG_PREFIX Disable Stealth:        $NO_STEALTH"
+echo "$LOG_PREFIX ---------------------"
+
+
+# --- Workflow Execution ---
+
+# 1. Install Dependencies (if not skipped)
+if [ "$SKIP_DEPS" = false ]; then
+  install_pkg_deps
+  install_pip_deps
+else
+  echo "$LOG_PREFIX Skipping dependency checks/installation as requested."
+fi
+
+# 2. Install Playwright Browser (if not skipped)
+if [ "$SKIP_BROWSER_INSTALL" = false ]; then
+  install_playwright_browser "$BROWSER_CHOICE"
+else
+  echo "$LOG_PREFIX Skipping Playwright browser installation as requested."
+fi
+
+# 3. Create the embedded Python script
+create_python_script
+
+# 4. Execute the Python script
+echo "$LOG_PREFIX --- Starting Python Script Execution ---"
+
+# Build argument list for Python script
+PYTHON_ARGS=("$SEARCH_TERM")
+[ -n "$JSON_OUTPUT" ] && PYTHON_ARGS+=("--output_json" "$JSON_OUTPUT")
+[ -n "$HTML_OUTPUT" ] && PYTHON_ARGS+=("--output_html" "$HTML_OUTPUT")
+[ -n "$SCREENSHOT_FILE" ] && PYTHON_ARGS+=("--screenshot" "$SCREENSHOT_FILE")
+PYTHON_ARGS+=("--browser" "$BROWSER_CHOICE")
+[ -n "$args_proxy_server" ] && PYTHON_ARGS+=("--proxy_server" "$args_proxy_server") # Example if proxy was added to getopt
+[ -n "$args_user_agent" ] && PYTHON_ARGS+=("--user_agent" "$args_user_agent") # Example if UA was added to getopt
+[ "$NO_BLOCK" = true ] && PYTHON_ARGS+=("--no_block")
+[ "$NO_STEALTH" = true ] && PYTHON_ARGS+=("--no_stealth")
+# Pass state if implemented: [ -n "$STATE" ] && PYTHON_ARGS+=("--state" "$STATE")
+
+# Run python script, passing collected arguments
+python "$PYTHON_SCRIPT_NAME" "${PYTHON_ARGS[@]}"
+
+PYTHON_EXIT_CODE=$? # Capture Python script exit code
+
+echo "$LOG_PREFIX --- Python Script Execution Finished (Exit Code: $PYTHON_EXIT_CODE) ---"
+
+# Check Python exit code before final message
+if [ $PYTHON_EXIT_CODE -ne 0 ]; then
+    echo "$LOG_PREFIX [ERROR] Python script failed with exit code $PYTHON_EXIT_CODE."
+    # Cleanup might still run via trap, or add specific error handling here
+    exit $PYTHON_EXIT_CODE
+fi
+
+echo "$LOG_PREFIX Bash script finished successfully."
+# Cleanup runs automatically via trap EXIT
+
+exit 0

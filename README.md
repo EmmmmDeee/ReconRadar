@@ -5,6 +5,7 @@ Advanced OSINT tool for discovering online profiles, geolocation data, contact i
 ## Features
 
 - **Username Search**: Search for profiles across 90+ social media platforms
+- **IDCrawl Integration**: Automated browser-based scraping of idcrawl.com for enhanced results
 - **Reverse Image Search**: Generate reverse image search links for popular search engines
 - **Metadata Extraction**: Extract metadata from profiles including avatar, bio, followers, etc.
 - **Content Extraction**: Extract readable content from web pages
@@ -15,11 +16,30 @@ Advanced OSINT tool for discovering online profiles, geolocation data, contact i
 
 ## Installation
 
+### Basic Installation
+
 ```bash
 git clone https://github.com/your-username/unve1ler.git
 cd unve1ler
 pip install -r requirements.txt
 ```
+
+### Browser Automation for IDCrawl Integration
+
+The IDCrawl automation feature requires additional system dependencies for browser automation:
+
+```bash
+# Install Playwright browsers
+playwright install
+
+# For Debian/Ubuntu systems, you might need:
+apt-get update
+apt-get install -y libatk1.0-0 libatk-bridge2.0-0 libcups2 libnss3 libxcomposite1 \
+                   libxrandr2 libgbm1 libxkbcommon0 libpango-1.0-0 libasound2 \
+                   libxdamage1 libenchant1c2a libicu-dev
+```
+
+If you're unable to install these dependencies, the system will gracefully fall back to the direct HTTP method for IDCrawl searches.
 
 ## Usage
 
@@ -36,13 +56,18 @@ Then access the web interface at: http://localhost:5000
 ### API Endpoints
 
 - `/search` - Search for social media profiles
+- `/search/advanced` - Advanced people search (including IDCrawl integration)
+- `/search/username` - Search specifically for usernames (with enhanced variation detection)
 - `/extract` - Extract web content and metadata
 - `/analyze/text` - Analyze text content
 - `/analyze/file` - Analyze file content
+- `/analyze/humint` - Analyze for human intelligence information
+- `/analyze/darkweb` - Analyze for dark web indicators
+- `/test/idcrawl-automation` - Test the IDCrawl automation functionality
 
-## Example
+## Examples
 
-Search for a username:
+### Basic Username Search
 
 ```bash
 curl -X POST "http://localhost:5000/search" \
@@ -50,12 +75,45 @@ curl -X POST "http://localhost:5000/search" \
   -d '{"username": "target_username"}'
 ```
 
-Extract website content with enhanced OSINT capabilities:
+### Advanced People Search with IDCrawl Integration
+
+```bash
+curl -X POST "http://localhost:5000/search/advanced" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "full_name": "John Smith",
+    "location": "New York",
+    "username": "jsmith",
+    "email": "john.smith@example.com"
+  }'
+```
+
+### Test IDCrawl Automation 
+
+```bash
+curl -X POST "http://localhost:5000/test/idcrawl-automation" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "username", 
+    "query": "janedoe", 
+    "use_automation": true
+  }'
+```
+
+### Extract Website Content
 
 ```bash
 curl -X POST "http://localhost:5000/extract" \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com"}'
+```
+
+### Analyze for Dark Web Indicators
+
+```bash
+curl -X POST "http://localhost:5000/analyze/darkweb" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Contact me at mysite.onion or send BTC to 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"}'
 ```
 
 ## Advanced Features
@@ -84,6 +142,17 @@ Extracts:
 - Email addresses in various formats
 - Phone numbers (international and local formats)
 - Physical addresses with intelligent pattern matching
+
+### IDCrawl Integration
+
+Leverages the power of idcrawl.com to find additional profiles:
+
+- Automated browser-based scraping using Playwright
+- CAPTCHA detection and avoidance
+- Browser fingerprint randomization
+- Stealth techniques to prevent detection
+- Graceful fallback to direct method when browser automation is not available
+- Comprehensive data extraction from search results
 
 ## Contributing
 

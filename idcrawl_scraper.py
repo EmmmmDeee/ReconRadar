@@ -3,6 +3,10 @@ IdCrawl Integration Module for unve1ler
 
 This module provides functionality to scrape and extract data from idcrawl.com,
 leveraging their comprehensive people search capabilities to enhance our own results.
+
+It supports two methods:
+1. Direct HTTP requests (basic, subject to CAPTCHA)
+2. Browser automation via Playwright (advanced, more reliable)
 """
 
 import logging
@@ -11,10 +15,49 @@ import re
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, quote_plus
+import os
+import asyncio
+import sys
+import time
+import hashlib
+from pathlib import Path
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Check if the automation dependencies are available
+AUTOMATION_AVAILABLE = False
+try:
+    import playwright
+    from tenacity import retry
+    AUTOMATION_AVAILABLE = True
+    logger.info("Playwright automation dependencies available")
+except ImportError:
+    logger.warning("Playwright automation dependencies not available. "
+                  "For enhanced IdCrawl access, install with: "
+                  "pip install playwright playwright-stealth tenacity")
+    
+# Import our custom automation module if it exists
+try:
+    from idcrawl_automation import perform_search
+    logger.info("IdCrawl automation module imported successfully")
+    AUTOMATION_SCRIPT_AVAILABLE = True
+except ImportError:
+    logger.warning("IdCrawl automation script not found")
+    AUTOMATION_SCRIPT_AVAILABLE = False
+    
+    # Define a dummy function to avoid errors if automation is not available
+    async def perform_search(*args, **kwargs):
+        """Dummy function when the real automation script is not available"""
+        logger.error("perform_search called but automation script is not available")
+        return {
+            "metadata": {
+                "success": False,
+                "error": "Automation script not available",
+                "captcha_detected": False
+            }
+        }
 
 class IdCrawlScraper:
     """Class for scraping and extracting data from idcrawl.com"""
@@ -464,34 +507,289 @@ class IdCrawlScraper:
 
 # Stand-alone functions for easy integration with unve1ler
 
-def search_username_on_idcrawl(username):
+def search_username_on_idcrawl(username, use_automation=True):
     """
     Search for a username on idcrawl.com
     
     Args:
         username (str): Username to search for
+        use_automation (bool): Whether to use browser automation if available
         
     Returns:
         dict: Structured results from idcrawl.com
     """
+    # First try automation if available and requested
+    if use_automation and AUTOMATION_AVAILABLE and AUTOMATION_SCRIPT_AVAILABLE:
+        try:
+            logger.info(f"Using Playwright automation to search IDCrawl for username: {username}")
+            
+            # Check if browser dependencies are available
+            try:
+                import tempfile
+                temp_json = os.path.join(tempfile.gettempdir(), f"idcrawl_{username}_{int(time.time())}.json")
+                
+                # Run the search asynchronously with headless mode
+                automation_results = asyncio.run(perform_search(
+                    search_term=username,
+                    json_output_path=temp_json,
+                    browser_type="chromium",
+                    block_resources_flag=True,
+                    use_stealth=True,
+                    headless=True  # Use headless mode to avoid system dependency issues
+                ))
+            except Exception as browser_error:
+                if "missing dependencies" in str(browser_error).lower():
+                    logger.warning(f"Browser dependencies missing: {str(browser_error)}")
+                    # Create a special error result
+                    return {
+                        "success": False,
+                        "error": "Browser automation dependencies missing. Install system libraries or use direct method.",
+                        "requires_system_deps": True,
+                        "missing_deps_error": str(browser_error),
+                        "profiles": {},
+                        "platform_metadata": {},
+                        "image_metadata": None
+                    }
+                else:
+                    # Re-raise for other types of errors
+                    raise
+            
+            # Check if automation was successful
+            if automation_results.get("metadata", {}).get("success", False):
+                logger.info(f"Successfully retrieved IDCrawl results for {username} via automation")
+                
+                # Convert automation results to the expected format
+                converted_results = {
+                    "success": True,
+                    "search_term": username,
+                    "profiles": {},
+                    "platform_metadata": {
+                        "categories": {
+                            "Social Media": [],
+                            "Professional": [],
+                            "Content Creation": [],
+                            "Gaming": [],
+                            "Other": []
+                        },
+                        "detailed_metadata": {}
+                    },
+                    "image_metadata": None
+                }
+                
+                # Map platforms to their URLs and categories
+                for platform in ["Instagram", "Twitter", "Facebook", "TikTok", "LinkedIn", "Quora"]:
+                    platform_results = automation_results.get(platform, [])
+                    
+                    for item in platform_results:
+                        profile_url = item.get("url", "")
+                        if profile_url:
+                            # Add to profiles
+                            converted_results["profiles"][platform] = profile_url
+                            
+                            # Categorize the platform
+                            platform_category = "Social Media"  # Default
+                            if platform in ["LinkedIn"]:
+                                platform_category = "Professional"
+                            elif platform in ["Quora"]:
+                                platform_category = "Content Creation"
+                            
+                            # Add to categories if not already there
+                            if platform not in converted_results["platform_metadata"]["categories"][platform_category]:
+                                converted_results["platform_metadata"]["categories"][platform_category].append(platform)
+                            
+                            # Add detailed metadata
+                            converted_results["platform_metadata"]["detailed_metadata"][platform] = {
+                                "platform": platform,
+                                "url": profile_url,
+                                "username": item.get("secondary_text", ""),
+                                "name": item.get("primary_text", ""),
+                                "avatar_url": item.get("img_src", ""),
+                                "bio": item.get("full_text", ""),
+                                "connections": [],
+                                "profile_id": hashlib.md5(profile_url.encode()).hexdigest()[:12]
+                            }
+                
+                # Add web results to other relevant data
+                web_results = automation_results.get("Web results", [])
+                if web_results:
+                    converted_results["web_results"] = web_results
+                
+                # Add usernames list
+                usernames = automation_results.get("Usernames", [])
+                if usernames:
+                    converted_results["usernames"] = usernames
+                
+                # Add sponsored links
+                sponsored = automation_results.get("Sponsored", {})
+                if sponsored:
+                    converted_results["sponsored_links"] = sponsored
+                
+                # Clean up temporary file if necessary
+                try:
+                    if os.path.exists(temp_json):
+                        os.remove(temp_json)
+                except:
+                    pass
+                
+                return converted_results
+            elif automation_results.get("metadata", {}).get("captcha_detected", False):
+                logger.warning(f"CAPTCHA detected during automation for {username}")
+            else:
+                logger.warning(f"Automation failed for {username}: {automation_results.get('metadata', {}).get('error', 'Unknown error')}")
+        
+        except Exception as e:
+            logger.error(f"Error using automation for IDCrawl: {str(e)}")
+            # Continue to fallback method
+    
+    # Fallback to direct scraping method
+    logger.info(f"Using direct scraping method for IDCrawl search: {username}")
     scraper = IdCrawlScraper()
     return scraper.search_username(username)
 
-def search_person_on_idcrawl(full_name, location=None):
+def search_person_on_idcrawl(full_name, location=None, use_automation=True):
     """
     Search for a person by name and optional location on idcrawl.com
     
     Args:
         full_name (str): Person's full name
         location (str, optional): Location for filtering results
+        use_automation (bool): Whether to use browser automation if available
         
     Returns:
         dict: Structured results from idcrawl.com
     """
+    # First try automation if available and requested
+    if use_automation and AUTOMATION_AVAILABLE and AUTOMATION_SCRIPT_AVAILABLE:
+        try:
+            logger.info(f"Using Playwright automation to search IDCrawl for: {full_name}")
+            
+            # Check if browser dependencies are available
+            try:
+                import tempfile
+                import time
+                import hashlib
+                temp_json = os.path.join(tempfile.gettempdir(), f"idcrawl_{hashlib.md5(full_name.encode()).hexdigest()[:8]}_{int(time.time())}.json")
+                
+                # Run the search asynchronously with headless mode
+                automation_results = asyncio.run(perform_search(
+                    search_term=full_name,
+                    state=location,  # Pass location as state parameter
+                    json_output_path=temp_json,
+                    browser_type="chromium",
+                    block_resources_flag=True,
+                    use_stealth=True,
+                    headless=True  # Use headless mode to avoid system dependency issues
+                ))
+            except Exception as browser_error:
+                if "missing dependencies" in str(browser_error).lower():
+                    logger.warning(f"Browser dependencies missing: {str(browser_error)}")
+                    # Create a special error result
+                    return {
+                        "success": False,
+                        "error": "Browser automation dependencies missing. Install system libraries or use direct method.",
+                        "requires_system_deps": True,
+                        "missing_deps_error": str(browser_error),
+                        "profiles": {},
+                        "platform_metadata": {},
+                        "image_metadata": None
+                    }
+                else:
+                    # Re-raise for other types of errors
+                    raise
+            
+            # Check if automation was successful - same conversion logic as above
+            if automation_results.get("metadata", {}).get("success", False):
+                logger.info(f"Successfully retrieved IDCrawl results for {full_name} via automation")
+                
+                # Convert automation results to the expected format (same as in search_username_on_idcrawl)
+                converted_results = {
+                    "success": True,
+                    "search_term": full_name,
+                    "profiles": {},
+                    "platform_metadata": {
+                        "categories": {
+                            "Social Media": [],
+                            "Professional": [],
+                            "Content Creation": [],
+                            "Gaming": [],
+                            "Other": []
+                        },
+                        "detailed_metadata": {}
+                    },
+                    "image_metadata": None
+                }
+                
+                # Map platforms to their URLs and categories
+                for platform in ["Instagram", "Twitter", "Facebook", "TikTok", "LinkedIn", "Quora"]:
+                    platform_results = automation_results.get(platform, [])
+                    
+                    for item in platform_results:
+                        profile_url = item.get("url", "")
+                        if profile_url:
+                            # Add to profiles
+                            converted_results["profiles"][platform] = profile_url
+                            
+                            # Categorize the platform
+                            platform_category = "Social Media"  # Default
+                            if platform in ["LinkedIn"]:
+                                platform_category = "Professional"
+                            elif platform in ["Quora"]:
+                                platform_category = "Content Creation"
+                            
+                            # Add to categories if not already there
+                            if platform not in converted_results["platform_metadata"]["categories"][platform_category]:
+                                converted_results["platform_metadata"]["categories"][platform_category].append(platform)
+                            
+                            # Add detailed metadata
+                            converted_results["platform_metadata"]["detailed_metadata"][platform] = {
+                                "platform": platform,
+                                "url": profile_url,
+                                "username": item.get("secondary_text", ""),
+                                "name": item.get("primary_text", ""),
+                                "avatar_url": item.get("img_src", ""),
+                                "bio": item.get("full_text", ""),
+                                "connections": [],
+                                "profile_id": hashlib.md5(profile_url.encode()).hexdigest()[:12]
+                            }
+                
+                # Add web results to other relevant data
+                web_results = automation_results.get("Web results", [])
+                if web_results:
+                    converted_results["web_results"] = web_results
+                
+                # Add usernames list
+                usernames = automation_results.get("Usernames", [])
+                if usernames:
+                    converted_results["usernames"] = usernames
+                
+                # Add sponsored links
+                sponsored = automation_results.get("Sponsored", {})
+                if sponsored:
+                    converted_results["sponsored_links"] = sponsored
+                
+                # Clean up temporary file if necessary
+                try:
+                    if os.path.exists(temp_json):
+                        os.remove(temp_json)
+                except:
+                    pass
+                
+                return converted_results
+            elif automation_results.get("metadata", {}).get("captcha_detected", False):
+                logger.warning(f"CAPTCHA detected during automation for {full_name}")
+            else:
+                logger.warning(f"Automation failed for {full_name}: {automation_results.get('metadata', {}).get('error', 'Unknown error')}")
+        
+        except Exception as e:
+            logger.error(f"Error using automation for IDCrawl: {str(e)}")
+            # Continue to fallback method
+    
+    # Fallback to direct scraping method
+    logger.info(f"Using direct scraping method for IDCrawl search: {full_name}")
     scraper = IdCrawlScraper()
     return scraper.search_person(full_name, location)
 
-def enrich_results_with_idcrawl(original_results, username=None, full_name=None, location=None, skip_idcrawl=False):
+def enrich_results_with_idcrawl(original_results, username=None, full_name=None, location=None, skip_idcrawl=False, use_automation=True):
     """
     Enrich existing search results with data from idcrawl.com
     
@@ -501,6 +799,7 @@ def enrich_results_with_idcrawl(original_results, username=None, full_name=None,
         full_name (str, optional): Person's full name
         location (str, optional): Location for filtering results
         skip_idcrawl (bool, optional): Skip idcrawl.com API calls (for testing or when CAPTCHA is known to be present)
+        use_automation (bool, optional): Whether to attempt browser automation for bypassing CAPTCHA
         
     Returns:
         dict: Enriched search results
@@ -520,13 +819,17 @@ def enrich_results_with_idcrawl(original_results, username=None, full_name=None,
         logger.info("Skipping idcrawl.com integration due to CAPTCHA protection")
         return enriched_results
     
+    # Check if we have automation available
+    automation_status = "available" if AUTOMATION_AVAILABLE and AUTOMATION_SCRIPT_AVAILABLE else "unavailable"
+    logger.info(f"IDCrawl automation is {automation_status} (use_automation={use_automation})")
+    
     # Track which search method to use
     idcrawl_results = None
     
     if username:
-        idcrawl_results = search_username_on_idcrawl(username)
+        idcrawl_results = search_username_on_idcrawl(username, use_automation=use_automation)
     elif full_name:
-        idcrawl_results = search_person_on_idcrawl(full_name, location)
+        idcrawl_results = search_person_on_idcrawl(full_name, location, use_automation=use_automation)
     else:
         return original_results  # No search criteria provided
     

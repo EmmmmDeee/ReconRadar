@@ -25,6 +25,8 @@ from web_scraper import (
 )
 from assets import process_attached_file, extract_social_profiles_from_text, extract_usernames_from_text, extract_image_urls_from_text
 from people_finder import search_username, search_person
+# Import IdCrawl scraper for advanced search capabilities
+from idcrawl_scraper import search_username_on_idcrawl, search_person_on_idcrawl, AUTOMATION_AVAILABLE, AUTOMATION_SCRIPT_AVAILABLE
 
 class JSONEncoder(json.JSONEncoder):
     """Custom JSON encoder to handle datetime objects"""
@@ -921,6 +923,95 @@ def search_username_api():
         logging.error(traceback.format_exc())
         return jsonify({
             'error': f"Username search failed: {str(e)}",
+            'status': 'error'
+        }), 500
+
+@app.route('/test/idcrawl-automation', methods=['POST'])
+def test_idcrawl_automation():
+    """
+    Test endpoint for the new IDCrawl automation feature.
+    
+    Expected JSON request body:
+    {
+        "type": "username" or "person",
+        "query": "search term",
+        "location": "optional location for person searches",
+        "use_automation": true/false (default: true)
+    }
+    """
+    data = request.get_json()
+    search_type = data.get('type', 'username')
+    query = data.get('query', '').strip()
+    location = data.get('location', None)
+    use_automation = data.get('use_automation', True)
+    
+    if not query:
+        return jsonify({
+            'error': 'Query parameter is required',
+            'status': 'error'
+        }), 400
+    
+    try:
+        # Start timer
+        start_time = time.time()
+        
+        # Check if automation dependencies are available
+        automation_status = {
+            'playwright_available': AUTOMATION_AVAILABLE,
+            'automation_script_available': AUTOMATION_SCRIPT_AVAILABLE,
+            'automation_enabled': use_automation,
+            'using_automation': use_automation and AUTOMATION_AVAILABLE and AUTOMATION_SCRIPT_AVAILABLE
+        }
+        
+        # Execute search based on type
+        if search_type == 'username':
+            results = search_username_on_idcrawl(query, use_automation=use_automation)
+        elif search_type == 'person':
+            results = search_person_on_idcrawl(query, location, use_automation=use_automation)
+        else:
+            return jsonify({
+                'error': f"Invalid search type: {search_type}. Must be 'username' or 'person'",
+                'status': 'error'
+            }), 400
+        
+        # Calculate processing time
+        processing_time = round(time.time() - start_time, 2)
+        
+        # Add metadata to response
+        response = {
+            'query': query,
+            'search_type': search_type,
+            'results': results,
+            'automation_status': automation_status,
+            'processing_time_seconds': processing_time,
+            'timestamp': datetime.now(),
+            'status': 'success' if results.get('success', False) else 'error'
+        }
+        
+        if location:
+            response['location'] = location
+            
+        if results.get('requires_captcha', False):
+            response['status'] = 'captcha_required'
+            response['message'] = 'CAPTCHA verification required. Automation may have been detected.'
+        elif results.get('requires_system_deps', False):
+            response['status'] = 'system_deps_required'
+            response['message'] = 'Missing system dependencies for browser automation.'
+            response['missing_deps_error'] = results.get('missing_deps_error', 'Unknown dependency error')
+            response['solution'] = 'Install browser dependencies or use direct method (use_automation=false)'
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logging.error(f"Error in IDCrawl automation test: {str(e)}")
+        logging.error(traceback.format_exc())
+        return jsonify({
+            'error': f"IDCrawl automation test failed: {str(e)}",
+            'automation_status': {
+                'playwright_available': AUTOMATION_AVAILABLE,
+                'automation_script_available': AUTOMATION_SCRIPT_AVAILABLE,
+                'automation_enabled': use_automation
+            },
             'status': 'error'
         }), 500
 
