@@ -77,9 +77,40 @@ def create_test_blueprint():
                 if not isinstance(usernames, list):
                     return jsonify({"status": "error", "message": "Invalid usernames format"}), 400
                     
-                # Run username checks
+                # Run username checks with a timeout limit
                 logger.info(f"Starting username checks for: {usernames}")
-                results = run_username_checks_wrapper(usernames)
+                # Use a shorter timeout for testing
+                max_check_time = 10  # seconds
+                import threading
+                import time
+                
+                # Create a dictionary to store results
+                result_dict = {"status": "timeout", "message": "Check took too long"}
+                
+                def run_check():
+                    nonlocal result_dict
+                    try:
+                        result_dict = run_username_checks_wrapper(usernames)
+                    except Exception as e:
+                        logger.error(f"Error in check thread: {e}")
+                        result_dict = {"error": str(e)}
+                
+                # Start the check in a separate thread
+                check_thread = threading.Thread(target=run_check)
+                check_thread.daemon = True
+                check_thread.start()
+                
+                # Wait for the thread to complete or timeout
+                start_time = time.time()
+                check_thread.join(timeout=max_check_time)
+                
+                # Check if we timed out
+                if check_thread.is_alive():
+                    logger.warning(f"Username check timed out after {max_check_time} seconds")
+                    results = {"status": "timeout", "message": f"Check timed out after {max_check_time} seconds"}
+                else:
+                    results = result_dict
+                    logger.info(f"Check completed in {time.time() - start_time:.2f} seconds")
                 
                 # Return results
                 return jsonify({
@@ -157,7 +188,7 @@ def create_test_blueprint():
                         document.getElementById('results').textContent = 'Checking usernames...';
                         
                         try {
-                            const response = await fetch('/test/username-check', {
+                            const response = await fetch('/api/test/username-check', {
                                 method: 'POST',
                                 headers: {
                                     'Content-Type': 'application/json'
@@ -186,11 +217,22 @@ def create_test_blueprint():
     @bp.route('/test/status', methods=['GET'])
     def test_status():
         """Test endpoint to check if the IDCrawl username checking functionality is enabled"""
+        # This is a simplified version that doesn't depend on potentially unbound variables
+        try:
+            # Get status from osint_modules without accessing possibly unbound variables
+            from osint_modules import USERNAME_CHECK_ENABLED, CHECK_TYPE
+            enabled = USERNAME_CHECK_ENABLED
+            check_type = CHECK_TYPE
+        except (ImportError, AttributeError) as e:
+            logger.error(f"Error importing check status: {e}")
+            enabled = False
+            check_type = "unknown"
+            
         return jsonify({
             "status": "success",
-            "username_check_enabled": USERNAME_CHECK_ENABLED,
-            "check_type": CHECK_TYPE,
-            "message": f"Username check is {'' if USERNAME_CHECK_ENABLED else 'NOT '}enabled. Using {CHECK_TYPE} for checks."
+            "username_check_enabled": enabled,
+            "check_type": check_type,
+            "message": f"Username check is {'' if enabled else 'NOT '}enabled. Using {check_type} for checks."
         })
         
     return bp
@@ -205,16 +247,27 @@ async def run_username_checks_wrapper(usernames, session=None):
         # Convert Pydantic models to dictionaries
         serializable_results = {}
         for username, user_result in results.items():
-            user_dict = {}
-            try:
-                # For Pydantic v2
-                for site, data in user_result.root.items():
-                    user_dict[site] = data.model_dump()
-            except AttributeError:
-                # For Pydantic v1
-                for site, data in user_result.__root__.items():
-                    user_dict[site] = data.model_dump() if hasattr(data, 'model_dump') else data.dict()
-            serializable_results[username] = user_dict
+            # If user_result is already a dictionary, use it directly
+            if isinstance(user_result, dict):
+                serializable_results[username] = user_result
+            else:
+                # Handle Pydantic model cases
+                user_dict = {}
+                try:
+                    # For Pydantic v2
+                    for site, data in user_result.root.items():
+                        user_dict[site] = data.model_dump()
+                except AttributeError:
+                    try:
+                        # For Pydantic v1
+                        for site, data in user_result.__root__.items():
+                            user_dict[site] = data.model_dump() if hasattr(data, 'model_dump') else data.dict()
+                    except AttributeError:
+                        # Default fallback if neither attribute exists
+                        logger.warning(f"Could not convert result for {username} to dictionary using Pydantic methods")
+                        user_dict = {"error": "Failed to convert result to JSON-serializable format"}
+                
+                serializable_results[username] = user_dict
             
         return serializable_results
     except Exception as e:
@@ -225,7 +278,7 @@ async def run_username_checks_wrapper(usernames, session=None):
 def register_test_blueprint(app):
     """Register the test blueprint with a Flask app"""
     bp = create_test_blueprint()
-    app.register_blueprint(bp)
+    app.register_blueprint(bp, url_prefix='/api')
     logger.info("Registered IDCrawl test blueprint")
     
     
@@ -234,4 +287,4 @@ if __name__ == "__main__":
     print("Add the following to your app.py:")
     print("from test_idcrawl_endpoint import register_test_blueprint")
     print("register_test_blueprint(app)")
-    print("Then you can test the username checking at /test/username-check")
+    print("Then you can test the username checking at /api/test/username-check")

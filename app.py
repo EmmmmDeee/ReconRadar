@@ -37,6 +37,33 @@ class JSONEncoder(json.JSONEncoder):
 
 app.json_encoder = JSONEncoder
 
+# Register the IDCrawl test blueprint
+try:
+    from test_idcrawl_endpoint import register_test_blueprint
+    register_test_blueprint(app)
+    logging.info("IDCrawl test blueprint registered successfully")
+except ImportError as e:
+    logging.error(f"Failed to load IDCrawl test blueprint: {e}")
+
+# Simple test endpoint
+@app.route('/api/simple-test', methods=['GET', 'POST'])
+def simple_test_endpoint():
+    """A very simple test endpoint that responds quickly"""
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        return jsonify({
+            "status": "success",
+            "message": "Simple test endpoint working",
+            "received_data": data,
+            "timestamp": str(datetime.now())
+        })
+    else:
+        return jsonify({
+            "status": "success",
+            "message": "Simple test endpoint working",
+            "timestamp": str(datetime.now())
+        })
+
 @app.route('/')
 def index():
     """Render the main search page"""
